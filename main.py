@@ -1313,7 +1313,6 @@ def _pose_path_uses_bufferx(
         and config.pose_path
         in {
             "combined",
-            "self_mesh",
             "cross_mesh",
         }
     )
@@ -1339,12 +1338,11 @@ def validate_config(
         )
 
     if (
-        config.pose_path
-        in {"self_mesh", "cross_mesh"}
+        config.pose_path == "cross_mesh"
         and not config.bufferx_enabled
     ):
         raise ValueError(
-            f"{config.pose_path} requires "
+            "cross_mesh requires "
             "bufferx.enabled=true."
         )
 
@@ -4034,38 +4032,119 @@ def _run_aligned_pair(
     )
     query_view = query_state.generated.prepared_view
 
-    bufferx_started_at = time.perf_counter()
-    bufferx_result = _run_bufferx_best_effort(
-        config=config,
-        reference_state=reference_state,
-        query_state=query_state,
-        output_root=output_root,
-    )
+    bufferx_result = None
+
     timing_values[
         "bufferx_registration_time_sec"
-    ] = (
-        time.perf_counter()
-        - bufferx_started_at
-        if _pose_path_uses_bufferx(config)
-        else 0.0
-    )
+    ] = 0.0
+
+    timing_values[
+        "dgedi_registration_time_sec"
+    ] = 0.0
 
     if config.pose_path == "self_mesh":
-        if bufferx_result is None:
-            raise RuntimeError(
-                "self_mesh requires a successful "
-                "BUFFER-X registration."
-            )
-
+        from pose.dgedi_runner import (
+            run_dgedi_registration,
+        )
         from pose.independent_pose_paths import (
             save_independent_pose_path,
+        )
+
+        dgedi_repository = Path(
+            os.environ.get(
+                "DGEDI_REPOSITORY",
+                str(
+                    PROJECT_ROOT
+                    / "external_models"
+                    / "dGeDi"
+                ),
+            )
+        ).expanduser().resolve()
+
+        dgedi_python = Path(
+            os.environ.get(
+                "DGEDI_PYTHON",
+                sys.executable,
+            )
+        ).expanduser().resolve()
+
+        dgedi_config = Path(
+            os.environ.get(
+                "DGEDI_CONFIG",
+                str(
+                    dgedi_repository
+                    / "config_dgedi.yaml"
+                ),
+            )
+        ).expanduser().resolve()
+
+        dgedi_started_at = (
+            time.perf_counter()
+        )
+
+        dgedi_result = (
+            run_dgedi_registration(
+                repository_path=(
+                    dgedi_repository
+                ),
+                python_executable=(
+                    dgedi_python
+                ),
+                config_path=dgedi_config,
+                reference_self_alignment=(
+                    reference_state
+                    .self_alignment
+                ),
+                query_self_alignment=(
+                    query_state
+                    .self_alignment
+                ),
+                output_directory=(
+                    output_root
+                    / "mesh_registration"
+                    / "dgedi"
+                ),
+                mode=os.environ.get(
+                    "DGEDI_MODE",
+                    "multi_scale",
+                ),
+                device=os.environ.get(
+                    "DGEDI_DEVICE",
+                    "cuda",
+                ),
+                sample_count=int(
+                    os.environ.get(
+                        "DGEDI_SAMPLE_COUNT",
+                        "6000",
+                    )
+                ),
+                ransac_threshold=float(
+                    os.environ.get(
+                        "DGEDI_RANSAC_THRESHOLD",
+                        "0.03",
+                    )
+                ),
+                icp_threshold=float(
+                    os.environ.get(
+                        "DGEDI_ICP_THRESHOLD",
+                        "0.03",
+                    )
+                ),
+            )
+        )
+
+        timing_values[
+            "dgedi_registration_time_sec"
+        ] = (
+            time.perf_counter()
+            - dgedi_started_at
         )
 
         independent_result = (
             save_independent_pose_path(
                 method="self_mesh",
                 relative_pose_query_from_reference=(
-                    bufferx_result
+                    dgedi_result
                     .relative_pose_query_from_reference
                 ),
                 output_directory=(
@@ -4074,10 +4153,14 @@ def _run_aligned_pair(
                     / "self_mesh"
                 ),
                 composition=(
-                    "T_Cq_from_Pq @ T_Pq_from_Pr "
+                    "T_Cq_from_Pq "
+                    "@ T_Pq_from_Pr "
                     "@ inv(T_Cr_from_Pr)"
                 ),
                 sources={
+                    "mesh_registration_backend": (
+                        "dgedi"
+                    ),
                     "reference_self_pose": (
                         reference_state
                         .self_alignment
@@ -4090,40 +4173,99 @@ def _run_aligned_pair(
                         .pose_camera_from_proxy
                         .tolist()
                     ),
-                    "bufferx_proxy_pose_path": str(
-                        bufferx_result
-                        .proxy_pose_path
+                    "dgedi_proxy_pose_path": (
+                        str(
+                            dgedi_result
+                            .proxy_pose_path
+                        )
                     ),
-                    "bufferx_metadata_path": str(
-                        bufferx_result
-                        .metadata_path
+                    "dgedi_relative_pose_path": (
+                        str(
+                            dgedi_result
+                            .relative_pose_path
+                        )
+                    ),
+                    "dgedi_metadata_path": (
+                        str(
+                            dgedi_result
+                            .metadata_path
+                        )
+                    ),
+                    "dgedi_registration_time_sec": (
+                        timing_values[
+                            "dgedi_registration_time_sec"
+                        ]
                     ),
                 },
             )
         )
+
         print(
-            "[Independent pose path] self_mesh"
+            "[Independent pose path] "
+            "self_mesh+dGeDi"
         )
+
+        print(
+            "[dGeDi proxy pose] "
+            f"{dgedi_result.proxy_pose_path}"
+        )
+
+        print(
+            "[dGeDi relative pose] "
+            f"{dgedi_result.relative_pose_path}"
+        )
+
         print(
             f"[Final summary] "
             f"{independent_result.summary_path}"
         )
+
         print(
             f"[Final pose] "
             f"{independent_result.pose_path}"
         )
+
         print(
             independent_result
             .relative_pose_query_from_reference
         )
+
         return PairPipelineOutcome(
             final_status="COMPLETED",
             summary_path=(
-                independent_result.summary_path
+                independent_result
+                .summary_path
             ),
-            pose_path=independent_result.pose_path,
+            pose_path=(
+                independent_result
+                .pose_path
+            ),
             visualization_path=None,
         )
+
+    bufferx_started_at = (
+        time.perf_counter()
+    )
+
+    bufferx_result = (
+        _run_bufferx_best_effort(
+            config=config,
+            reference_state=reference_state,
+            query_state=query_state,
+            output_root=output_root,
+        )
+    )
+
+    timing_values[
+        "bufferx_registration_time_sec"
+    ] = (
+        time.perf_counter()
+        - bufferx_started_at
+        if _pose_path_uses_bufferx(
+            config
+        )
+        else 0.0
+    )
 
     print(
         "[5/8] Selected proxies -> opposite RGB-D "

@@ -54,3 +54,5 @@ TRELLIS/
 
 # Local execution logs
 run_*.log
+
+external_models/dGeDi/
