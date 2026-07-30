@@ -1,0 +1,89 @@
+{
+  "mode": "multi_query",
+  "reference": {
+    "scene_id": 8,
+    "image_id": 0,
+    "instance_index": 0,
+    "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/shared_reference",
+    "status": "completed",
+    "selected_candidate_index": 2,
+    "self_evaluation_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/shared_reference/self_evaluation/reference/alignment_evaluation.json"
+  },
+  "requested_query_image_ids": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "foundationpose_workers": 2,
+  "completed_count": 5,
+  "failed_count": 0,
+  "queries": [
+    {
+      "scene_id": 8,
+      "image_id": 1,
+      "instance_index": 0,
+      "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000001_i00",
+      "status": "completed",
+      "final_status": "CONSISTENT",
+      "final_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000001_i00/final/final_selection.json",
+      "pose_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000001_i00/final/final_relative_pose.npy",
+      "visualization_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000001_i00/visualizations/index.html",
+      "visualization_error": null,
+      "research_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000001_i00/research/research_result_paths.json"
+    },
+    {
+      "scene_id": 8,
+      "image_id": 2,
+      "instance_index": 0,
+      "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000002_i00",
+      "status": "completed",
+      "final_status": "REJECT",
+      "final_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000002_i00/final/final_selection.json",
+      "pose_path": null,
+      "visualization_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000002_i00/visualizations/index.html",
+      "visualization_error": null,
+      "research_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000002_i00/research/research_result_paths.json"
+    },
+    {
+      "scene_id": 8,
+      "image_id": 3,
+      "instance_index": 0,
+      "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000003_i00",
+      "status": "completed",
+      "final_status": "REJECT",
+      "final_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000003_i00/final/final_selection.json",
+      "pose_path": null,
+      "visualization_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000003_i00/visualizations/index.html",
+      "visualization_error": null,
+      "research_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000003_i00/research/research_result_paths.json"
+    },
+    {
+      "scene_id": 8,
+      "image_id": 4,
+      "instance_index": 0,
+      "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000004_i00",
+      "status": "completed",
+      "final_status": "REJECT",
+      "final_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000004_i00/final/final_selection.json",
+      "pose_path": null,
+      "visualization_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000004_i00/visualizations/index.html",
+      "visualization_error": null,
+      "research_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000004_i00/research/research_result_paths.json"
+    },
+    {
+      "scene_id": 8,
+      "image_id": 5,
+      "instance_index": 0,
+      "output_root": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000005_i00",
+      "status": "completed",
+      "final_status": "REJECT",
+      "final_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000005_i00/final/final_selection.json",
+      "pose_path": null,
+      "visualization_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000005_i00/visualizations/index.html",
+      "visualization_error": null,
+      "research_summary_path": "/home/park/vm/code/outputs/batch_visible_scale_query_only_fallback_o08_q000001-000005/queries/q000008_000005_i00/research/research_result_paths.json"
+    }
+  ]
+}

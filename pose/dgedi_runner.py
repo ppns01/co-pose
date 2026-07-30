@@ -60,7 +60,90 @@ def _rigid(value: Any, name: str) -> np.ndarray:
         )
 
     return matrix
+def _save_self_aligned_mesh(
+    *,
+    source_mesh_path: Path,
+    pose_camera_from_proxy: Any,
+    output_mesh_path: Path,
+) -> Path:
+    """
+    FoundationPose self pose를 mesh vertex에 직접 적용하고
+    camera 좌표계의 새 mesh 파일로 저장한다.
 
+    output vertex:
+        p_camera = T_camera_from_proxy @ p_proxy
+    """
+    import open3d as o3d
+
+    source_mesh_path = (
+        Path(source_mesh_path)
+        .expanduser()
+        .resolve()
+    )
+
+    output_mesh_path = (
+        Path(output_mesh_path)
+        .expanduser()
+        .resolve()
+    )
+
+    if not source_mesh_path.is_file():
+        raise FileNotFoundError(
+            f"Source mesh not found: "
+            f"{source_mesh_path}"
+        )
+
+    pose = _rigid(
+        pose_camera_from_proxy,
+        "FoundationPose self pose",
+    )
+
+    mesh = o3d.io.read_triangle_mesh(
+        str(source_mesh_path),
+        enable_post_processing=True,
+    )
+
+    if len(mesh.vertices) == 0:
+        raise ValueError(
+            f"Mesh has no vertices: "
+            f"{source_mesh_path}"
+        )
+
+    # FoundationPose self pose를 실제 mesh에 bake한다.
+    mesh.transform(pose)
+
+    if not mesh.has_vertex_normals():
+        mesh.compute_vertex_normals()
+
+    if not mesh.has_triangle_normals():
+        mesh.compute_triangle_normals()
+
+    output_mesh_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    saved = o3d.io.write_triangle_mesh(
+        str(output_mesh_path),
+        mesh,
+        write_ascii=False,
+        compressed=False,
+        print_progress=False,
+    )
+
+    if not saved:
+        raise IOError(
+            "Failed to save self-aligned mesh: "
+            f"{output_mesh_path}"
+        )
+
+    if not output_mesh_path.is_file():
+        raise FileNotFoundError(
+            "Self-aligned mesh was not created: "
+            f"{output_mesh_path}"
+        )
+
+    return output_mesh_path
 
 def compose_dgedi_relative_pose(
     *,
@@ -497,10 +580,14 @@ def _worker(
     metadata = {
         "status": "completed",
         "backend": "dgedi",
-        "pose_convention": (
-            "T_query_proxy_from_"
-            "reference_proxy"
-        ),
+"pose_convention": (
+    "T_query_camera_from_"
+    "reference_camera"
+),
+"input_meshes": (
+    "FoundationPose self-aligned "
+    "meshes with pose baked into vertices"
+),
         "translation_unit": "meter",
         "reference_mesh": (
             str(reference_mesh)
@@ -602,15 +689,27 @@ def run_dgedi_registration(
         .resolve()
     )
 
-    reference_mesh = Path(
+    raw_reference_mesh = Path(
         reference_self_alignment
         .scaled_mesh_path
     ).expanduser().resolve()
 
-    query_mesh = Path(
+    raw_query_mesh = Path(
         query_self_alignment
         .scaled_mesh_path
     ).expanduser().resolve()
+
+    reference_self = _rigid(
+        reference_self_alignment
+        .pose_camera_from_proxy,
+        "reference FoundationPose self pose",
+    )
+
+    query_self = _rigid(
+        query_self_alignment
+        .pose_camera_from_proxy,
+        "query FoundationPose self pose",
+    )
 
     if not repository.is_dir():
         raise FileNotFoundError(
@@ -627,19 +726,76 @@ def run_dgedi_registration(
             f"dGeDi config: {config_path}"
         )
 
-    if not reference_mesh.is_file():
+    if not raw_reference_mesh.is_file():
         raise FileNotFoundError(
-            f"Reference mesh: {reference_mesh}"
+            "Reference generated mesh: "
+            f"{raw_reference_mesh}"
         )
 
-    if not query_mesh.is_file():
+    if not raw_query_mesh.is_file():
         raise FileNotFoundError(
-            f"Query mesh: {query_mesh}"
+            "Query generated mesh: "
+            f"{raw_query_mesh}"
         )
 
     output.mkdir(
         parents=True,
         exist_ok=True,
+    )
+
+    self_aligned_mesh_root = (
+        output
+        / "self_aligned_meshes"
+    )
+
+    # Reference mesh:
+    # P_r -> C_r
+    reference_mesh = (
+        _save_self_aligned_mesh(
+            source_mesh_path=(
+                raw_reference_mesh
+            ),
+            pose_camera_from_proxy=(
+                reference_self
+            ),
+            output_mesh_path=(
+                self_aligned_mesh_root
+                / (
+                    "reference_self_aligned_"
+                    "in_reference_camera.obj"
+                )
+            ),
+        )
+    )
+
+    # Query mesh:
+    # P_q -> C_q
+    query_mesh = (
+        _save_self_aligned_mesh(
+            source_mesh_path=(
+                raw_query_mesh
+            ),
+            pose_camera_from_proxy=(
+                query_self
+            ),
+            output_mesh_path=(
+                self_aligned_mesh_root
+                / (
+                    "query_self_aligned_"
+                    "in_query_camera.obj"
+                )
+            ),
+        )
+    )
+
+    print(
+        "[Reference self-aligned mesh] "
+        f"{reference_mesh}"
+    )
+
+    print(
+        "[Query self-aligned mesh] "
+        f"{query_mesh}"
     )
 
     command = [
@@ -720,38 +876,22 @@ def run_dgedi_registration(
             f"dGeDi metadata: {metadata_path}"
         )
 
-    proxy_pose = _rigid(
+    # dGeDi 입력 mesh가 이미 각각 C_r, C_q 좌표계에
+    # 저장되어 있으므로 dGeDi source->target transform은
+    # 곧바로 T_Cq_from_Cr이다.
+    direct_relative_pose = _rigid(
         np.load(
             proxy_pose_path,
             allow_pickle=False,
         ),
-        "dGeDi proxy pose",
-    )
-
-    reference_self = _rigid(
-        reference_self_alignment
-        .pose_camera_from_proxy,
-        "reference self pose",
-    )
-
-    query_self = _rigid(
-        query_self_alignment
-        .pose_camera_from_proxy,
-        "query self pose",
+        (
+            "dGeDi direct relative "
+            "camera pose"
+        ),
     )
 
     relative_pose = (
-        compose_dgedi_relative_pose(
-            reference_pose_camera_from_proxy=(
-                reference_self
-            ),
-            query_pose_camera_from_proxy=(
-                query_self
-            ),
-            proxy_pose_query_from_reference=(
-                proxy_pose
-            ),
-        )
+        direct_relative_pose.copy()
     )
 
     relative_pose_path = (
@@ -776,15 +916,39 @@ def run_dgedi_registration(
 
     metadata.update(
         {
-            "relative_pose_convention": (
-                "T_query_camera_from_"
-                "reference_camera"
+            "strategy": (
+                "foundationpose_self_pose_"
+                "baked_into_mesh_then_dgedi"
+            ),
+            "input_mesh_coordinate_frames": {
+                "reference": (
+                    "reference_camera"
+                ),
+                "query": (
+                    "query_camera"
+                ),
+            },
+            "raw_reference_mesh": str(
+                raw_reference_mesh
+            ),
+            "raw_query_mesh": str(
+                raw_query_mesh
+            ),
+            "reference_self_aligned_mesh": (
+                str(reference_mesh)
+            ),
+            "query_self_aligned_mesh": (
+                str(query_mesh)
             ),
             "reference_pose_camera_from_proxy": (
                 reference_self.tolist()
             ),
             "query_pose_camera_from_proxy": (
                 query_self.tolist()
+            ),
+            "relative_pose_convention": (
+                "T_query_camera_from_"
+                "reference_camera"
             ),
             "relative_pose_query_from_reference": (
                 relative_pose.tolist()
@@ -810,8 +974,12 @@ def run_dgedi_registration(
         )
 
     return DGeDiRegistrationResult(
+        # 입력 mesh에 FoundationPose self pose가 이미
+        # bake되어 있으므로 dGeDi 출력은 직접
+        # T_query_camera_from_reference_camera이다.
+        # 필드명은 기존 main.py 호환을 위해 유지한다.
         proxy_pose_query_from_reference=(
-            proxy_pose
+            relative_pose
         ),
         relative_pose_query_from_reference=(
             relative_pose

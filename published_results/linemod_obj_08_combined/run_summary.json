@@ -1,79 +1,79 @@
 {
   "schema_version": 1,
-  "updated_at_utc": "2026-07-30T17:23:37+00:00",
-  "pair_result_count": 1,
+  "updated_at_utc": "2026-07-30T17:39:49+00:00",
+  "pair_result_count": 2,
   "variants": {
     "OFF": {
-      "count": 0,
-      "consistent_count": 0,
+      "count": 1,
+      "consistent_count": 1,
       "reject_count": 0,
-      "consistency_rate": null,
+      "consistency_rate": 1.0,
       "metrics": {
         "reference_path_rotation_error_deg": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 2.726792790376895,
+          "median": 2.726792790376895,
+          "min": 2.726792790376895,
+          "max": 2.726792790376895
         },
         "reference_path_translation_error_cm": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 4.950770180426989,
+          "median": 4.950770180426989,
+          "min": 4.950770180426989,
+          "max": 4.950770180426989
         },
         "query_path_rotation_error_deg": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 1.224538508914849,
+          "median": 1.224538508914849,
+          "min": 1.224538508914849,
+          "max": 1.224538508914849
         },
         "query_path_translation_error_cm": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 2.2830732921209353,
+          "median": 2.2830732921209353,
+          "min": 2.2830732921209353,
+          "max": 2.2830732921209353
         },
         "final_rotation_error_deg": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 1.224538508914849,
+          "median": 1.224538508914849,
+          "min": 1.224538508914849,
+          "max": 1.224538508914849
         },
         "final_translation_error_cm": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 2.2830732921209353,
+          "median": 2.2830732921209353,
+          "min": 2.2830732921209353,
+          "max": 2.2830732921209353
         },
         "path_rotation_difference_deg": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 1.5604110726372682,
+          "median": 1.5604110726372682,
+          "min": 1.5604110726372682,
+          "max": 1.5604110726372682
         },
         "path_translation_difference_cm": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 2.757943626189743,
+          "median": 2.757943626189743,
+          "min": 2.757943626189743,
+          "max": 2.757943626189743
         },
         "normalized_translation_difference": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 0.08510188370608661,
+          "median": 0.08510188370608661,
+          "min": 0.08510188370608661,
+          "max": 0.08510188370608661
         },
         "proxy_scale_difference_percent": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 0.36846139967470215,
+          "median": 0.36846139967470215,
+          "min": 0.36846139967470215,
+          "max": 0.36846139967470215
         },
         "total_time_sec": {
-          "mean": null,
-          "median": null,
-          "min": null,
-          "max": null
+          "mean": 125.32784277899987,
+          "median": 125.32784277899987,
+          "min": 125.32784277899987,
+          "max": 125.32784277899987
         }
       }
     },
@@ -152,11 +152,11 @@
       }
     }
   },
-  "off_on_comparison_count": 0,
+  "off_on_comparison_count": 1,
   "status_transitions": {
     "REJECT->REJECT": 0,
     "REJECT->CONSISTENT": 0,
     "CONSISTENT->REJECT": 0,
-    "CONSISTENT->CONSISTENT": 0
+    "CONSISTENT->CONSISTENT": 1
   }
 }
