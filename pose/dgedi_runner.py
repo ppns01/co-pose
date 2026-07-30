@@ -230,30 +230,108 @@ def _mesh_to_cloud(
 def _diameter(
     points: np.ndarray,
     block: int = 256,
+    maximum_points: int = 6000,
 ) -> float:
+    """
+    Point cloud diameter를 근사 계산한다.
+
+    dGeDi descriptor와 registration에는 전체 점을 사용하지만,
+    O(N^2)인 diameter 계산에는 최대 maximum_points만 사용한다.
+    각 축의 최소·최대점은 항상 포함하여 물체 크기 손실을 줄인다.
+    """
     points = np.asarray(
         points,
         dtype=np.float64,
     )
 
-    maximum = 0.0
+    if (
+        points.ndim != 2
+        or points.shape[1] != 3
+        or len(points) < 2
+        or not np.all(np.isfinite(points))
+    ):
+        raise ValueError(
+            "Invalid points for diameter: "
+            f"shape={points.shape}"
+        )
+
+    original_count = len(points)
+
+    if original_count > maximum_points:
+        extreme_indices = np.unique(
+            np.concatenate(
+                [
+                    np.argmin(
+                        points,
+                        axis=0,
+                    ),
+                    np.argmax(
+                        points,
+                        axis=0,
+                    ),
+                ]
+            )
+        ).astype(
+            np.int64,
+            copy=False,
+        )
+
+        remaining_count = (
+            maximum_points
+            - len(extreme_indices)
+        )
+
+        all_indices = np.arange(
+            original_count,
+            dtype=np.int64,
+        )
+
+        available_mask = np.ones(
+            original_count,
+            dtype=bool,
+        )
+
+        available_mask[
+            extreme_indices
+        ] = False
+
+        available_indices = (
+            all_indices[available_mask]
+        )
+
+        rng = np.random.default_rng(0)
+
+        sampled_indices = rng.choice(
+            available_indices,
+            size=remaining_count,
+            replace=False,
+        )
+
+        selected_indices = np.concatenate(
+            [
+                extreme_indices,
+                sampled_indices,
+            ]
+        )
+
+        points = points[
+            selected_indices
+        ]
+
+    maximum_squared = 0.0
 
     for start in range(
         0,
         len(points),
         block,
     ):
+        current = points[
+            start : start + block
+        ]
+
         delta = (
-            points[
-                start : start + block,
-                None,
-                :,
-            ]
-            - points[
-                None,
-                :,
-                :,
-            ]
+            current[:, None, :]
+            - points[None, :, :]
         )
 
         squared = np.einsum(
@@ -263,12 +341,31 @@ def _diameter(
             optimize=True,
         )
 
-        maximum = max(
-            maximum,
+        maximum_squared = max(
+            maximum_squared,
             float(squared.max()),
         )
 
-    return float(np.sqrt(maximum))
+    diameter = float(
+        np.sqrt(maximum_squared)
+    )
+
+    if (
+        not np.isfinite(diameter)
+        or diameter <= 0.0
+    ):
+        raise ValueError(
+            f"Invalid diameter: {diameter}"
+        )
+
+    print(
+        "[dGeDi diameter] "
+        f"source_points={original_count}, "
+        f"diameter_points={len(points)}, "
+        f"diameter_m={diameter:.9f}"
+    )
+
+    return diameter
 
 
 def _normalize(

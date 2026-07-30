@@ -4152,11 +4152,12 @@ def _run_aligned_pair(
                     / "method_results"
                     / "self_mesh"
                 ),
-                composition=(
-                    "T_Cq_from_Pq "
-                    "@ T_Pq_from_Pr "
-                    "@ inv(T_Cr_from_Pr)"
-                ),
+composition=(
+    "FoundationPose self poses baked "
+    "into generated meshes; "
+    "dGeDi directly estimates "
+    "T_Cq_from_Cr"
+),
                 sources={
                     "mesh_registration_backend": (
                         "dgedi"
@@ -4206,7 +4207,7 @@ def _run_aligned_pair(
         )
 
         print(
-            "[dGeDi proxy pose] "
+            "[dGeDi direct relative pose] "
             f"{dgedi_result.proxy_pose_path}"
         )
 
