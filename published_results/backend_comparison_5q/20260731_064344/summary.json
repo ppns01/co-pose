@@ -1,0 +1,557 @@
+{
+  "experiment": {
+    "scene_id": 8,
+    "object_id": 8,
+    "reference_image_id": 0,
+    "query_image_ids": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "bufferx_root": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514",
+    "dgedi_root": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250"
+  },
+  "bufferx": {
+    "count": 5,
+    "rotation_error_deg": {
+      "mean": 17.626638720473395,
+      "median": 4.477759925048604,
+      "std": 22.968996018140512,
+      "minimum": 3.116330446372222,
+      "maximum": 63.010767871311245
+    },
+    "translation_error_cm": {
+      "mean": 28.942848950569157,
+      "median": 7.780664524840265,
+      "std": 36.96830565777165,
+      "minimum": 5.686972749593108,
+      "maximum": 101.90252435309787
+    },
+    "success_count_5deg_5cm": 0,
+    "success_count_2deg_2cm": 0,
+    "success_count_1deg_1cm": 0
+  },
+  "dgedi": {
+    "count": 5,
+    "rotation_error_deg": {
+      "mean": 10.41087492923918,
+      "median": 5.979408100874565,
+      "std": 9.3837959380751,
+      "minimum": 3.7786495628471233,
+      "maximum": 28.789046362799013
+    },
+    "translation_error_cm": {
+      "mean": 18.117358339986243,
+      "median": 10.228904019358115,
+      "std": 16.607058335919106,
+      "minimum": 6.0210308181586285,
+      "maximum": 50.64135576397302
+    },
+    "success_count_5deg_5cm": 0,
+    "success_count_2deg_2cm": 0,
+    "success_count_1deg_1cm": 0
+  },
+  "pairwise_wins": {
+    "rotation": {
+      "bufferx": 2,
+      "dgedi": 3
+    },
+    "translation": {
+      "bufferx": 2,
+      "dgedi": 3
+    },
+    "both_metrics": {
+      "bufferx": 2,
+      "dgedi": 3
+    }
+  },
+  "rows": [
+    {
+      "query_image_id": 1,
+      "bufferx_rotation_error_deg": 3.116330446372222,
+      "bufferx_translation_error_cm": 5.686972749593108,
+      "bufferx_translation_x_cm": 5.646208812051793,
+      "bufferx_translation_y_cm": -0.6076465406460035,
+      "bufferx_translation_z_cm": -0.30455013867051184,
+      "dgedi_rotation_error_deg": 5.979408100874565,
+      "dgedi_translation_error_cm": 10.228904019358115,
+      "dgedi_translation_x_cm": 9.218801392868178,
+      "dgedi_translation_y_cm": 4.3850809015591885,
+      "dgedi_translation_z_cm": 0.6443941362808924,
+      "rotation_delta_dgedi_minus_bufferx": 2.863077654502343,
+      "translation_delta_cm_dgedi_minus_bufferx": 4.541931269765007,
+      "rotation_winner": "bufferx",
+      "translation_winner": "bufferx",
+      "bufferx_pose_path": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514/queries/q000008_000001_i00/method_results/self_mesh/final_relative_pose.npy",
+      "dgedi_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250/queries/q000008_000001_i00/method_results/self_mesh/final_relative_pose.npy",
+      "bufferx_pose": [
+        [
+          0.9997005556706093,
+          -0.02414081139851798,
+          -0.004057097420205571,
+          0.015843023998079495
+        ],
+        [
+          0.02394906733865909,
+          0.9988275929332363,
+          -0.04206408900012782,
+          -0.0018149503031794911
+        ],
+        [
+          0.005067888651552938,
+          0.04195517341821736,
+          0.9991063929675247,
+          -0.043889360701623636
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dgedi_pose": [
+        [
+          0.9993185482875077,
+          0.0022676700911117335,
+          -0.03684150812489714,
+          0.051568949806243346
+        ],
+        [
+          -0.005626057538991999,
+          0.9958064616658867,
+          -0.09131176474610155,
+          0.04811232411887243
+        ],
+        [
+          0.036479946890409516,
+          0.09145681263217972,
+          0.995140625689682,
+          -0.034399917952109595
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "ground_truth_pose": [
+        [
+          0.9981008172035217,
+          -0.03838849067687988,
+          0.048178818076848984,
+          -0.04061906412243843
+        ],
+        [
+          0.04062974825501442,
+          0.9980939030647278,
+          -0.04644881933927536,
+          0.004261515103280544
+        ],
+        [
+          -0.04630506783723831,
+          0.048318810760974884,
+          0.9977576732635498,
+          -0.04084385931491852
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "query_image_id": 2,
+      "bufferx_rotation_error_deg": 4.42677987448502,
+      "bufferx_translation_error_cm": 7.780664524840265,
+      "bufferx_translation_x_cm": 7.6244905050472225,
+      "bufferx_translation_y_cm": -1.441046136403676,
+      "bufferx_translation_z_cm": -0.5738214176105427,
+      "dgedi_rotation_error_deg": 4.289306702802053,
+      "dgedi_translation_error_cm": 7.724844435592444,
+      "dgedi_translation_x_cm": 6.3612782276537025,
+      "dgedi_translation_y_cm": 4.3739383323599474,
+      "dgedi_translation_z_cm": 0.2757250971434869,
+      "rotation_delta_dgedi_minus_bufferx": -0.13747317168296735,
+      "translation_delta_cm_dgedi_minus_bufferx": -0.055820089247821336,
+      "rotation_winner": "dgedi",
+      "translation_winner": "dgedi",
+      "bufferx_pose_path": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514/queries/q000008_000002_i00/method_results/self_mesh/final_relative_pose.npy",
+      "dgedi_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250/queries/q000008_000002_i00/method_results/self_mesh/final_relative_pose.npy",
+      "bufferx_pose": [
+        [
+          0.9992826356013287,
+          0.023270011772039415,
+          0.02986442915075901,
+          0.030308026279882397
+        ],
+        [
+          -0.022509454564229127,
+          0.9994194424526741,
+          -0.025560501586914062,
+          0.03344136935686473
+        ],
+        [
+          -0.030442041500590336,
+          0.024870534071801276,
+          0.9992267234806339,
+          -0.033949737023519444
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dgedi_pose": [
+        [
+          0.9983789842322396,
+          0.03389072621455395,
+          0.045725512791636794,
+          0.017675903505947194
+        ],
+        [
+          -0.030102761032602232,
+          0.9962489692242015,
+          -0.08112838651140268,
+          0.09159121404450096
+        ],
+        [
+          -0.048303494921401166,
+          0.07962041193299114,
+          0.995654238368928,
+          -0.025454271875979147
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "ground_truth_pose": [
+        [
+          0.9942216277122498,
+          0.018718011677265167,
+          0.10569675266742706,
+          -0.04593687877058983
+        ],
+        [
+          -0.01477130502462387,
+          0.9991686344146729,
+          -0.03799785301089287,
+          0.04785183072090149
+        ],
+        [
+          -0.10631982982158661,
+          0.03621707111597061,
+          0.9936717748641968,
+          -0.028211522847414017
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "query_image_id": 3,
+      "bufferx_rotation_error_deg": 13.10155548514989,
+      "bufferx_translation_error_cm": 22.227773381626097,
+      "bufferx_translation_x_cm": 21.678891048454847,
+      "bufferx_translation_y_cm": -4.842808260235837,
+      "bufferx_translation_z_cm": 0.8042391241052438,
+      "dgedi_rotation_error_deg": 28.789046362799013,
+      "dgedi_translation_error_cm": 50.64135576397302,
+      "dgedi_translation_x_cm": 48.456208871911514,
+      "dgedi_translation_y_cm": -11.343728608133338,
+      "dgedi_translation_z_cm": 9.373502901262938,
+      "rotation_delta_dgedi_minus_bufferx": 15.687490877649124,
+      "translation_delta_cm_dgedi_minus_bufferx": 28.41358238234692,
+      "rotation_winner": "bufferx",
+      "translation_winner": "bufferx",
+      "bufferx_pose_path": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514/queries/q000008_000003_i00/method_results/self_mesh/final_relative_pose.npy",
+      "dgedi_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250/queries/q000008_000003_i00/method_results/self_mesh/final_relative_pose.npy",
+      "bufferx_pose": [
+        [
+          0.977979546276423,
+          -0.01685934383174195,
+          -0.20801661733382776,
+          0.202507751217719
+        ],
+        [
+          -0.005511017645755056,
+          0.9942970120885456,
+          -0.1064951850294418,
+          0.11964837299075076
+        ],
+        [
+          0.20862636225406242,
+          0.10529804386240905,
+          0.9723097347684981,
+          0.009947983399489213
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dgedi_pose": [
+        [
+          0.8866590546952313,
+          0.03378355307107542,
+          -0.4611880226858301,
+          0.47028092945228567
+        ],
+        [
+          -0.05958582286083068,
+          0.9973602788415348,
+          -0.041497034871680154,
+          0.054639169511775755
+        ],
+        [
+          0.45856869762443264,
+          0.06427398953726918,
+          0.8863315428371084,
+          0.09564062117106616
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "ground_truth_pose": [
+        [
+          0.9998726844787598,
+          0.010192438960075378,
+          0.012274823151528835,
+          -0.01428115926682949
+        ],
+        [
+          -0.008179058320820332,
+          0.9880056381225586,
+          -0.15419645607471466,
+          0.16807645559310913
+        ],
+        [
+          -0.013699007220566273,
+          0.15407578647136688,
+          0.9879635572433472,
+          0.0019055921584367752
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "query_image_id": 4,
+      "bufferx_rotation_error_deg": 63.010767871311245,
+      "bufferx_translation_error_cm": 101.90252435309787,
+      "bufferx_translation_x_cm": 28.394524094693054,
+      "bufferx_translation_y_cm": 52.383249749040694,
+      "bufferx_translation_z_cm": 82.66722819049413,
+      "dgedi_rotation_error_deg": 9.217963916873144,
+      "dgedi_translation_error_cm": 15.970656662848999,
+      "dgedi_translation_x_cm": -0.18784583443014757,
+      "dgedi_translation_y_cm": -14.708395762819562,
+      "dgedi_translation_z_cm": -6.220103075461201,
+      "rotation_delta_dgedi_minus_bufferx": -53.7928039544381,
+      "translation_delta_cm_dgedi_minus_bufferx": -85.93186769024888,
+      "rotation_winner": "dgedi",
+      "translation_winner": "dgedi",
+      "bufferx_pose_path": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514/queries/q000008_000004_i00/method_results/self_mesh/final_relative_pose.npy",
+      "dgedi_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250/queries/q000008_000004_i00/method_results/self_mesh/final_relative_pose.npy",
+      "bufferx_pose": [
+        [
+          0.9557712592297225,
+          0.06314982358729965,
+          -0.2872522190429759,
+          0.2937229219176589
+        ],
+        [
+          -0.2940941212202053,
+          0.21590528950301946,
+          -0.9310714661264173,
+          0.8269745086560258
+        ],
+        [
+          0.0032222813280920327,
+          0.9743702291634315,
+          0.22492796462968193,
+          0.8579967877109106
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dgedi_pose": [
+        [
+          0.9947230833588998,
+          -0.09973986748699121,
+          -0.024040513027681645,
+          0.007899222626426922
+        ],
+        [
+          0.09559188466774808,
+          0.9861039819052265,
+          -0.13587173531063765,
+          0.15605805353742327
+        ],
+        [
+          0.03725827449875091,
+          0.13285667354082098,
+          0.9904347153028523,
+          -0.03087652494864277
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "ground_truth_pose": [
+        [
+          0.9960885047912598,
+          -0.08326013386249542,
+          -0.029565688222646713,
+          0.009777680970728397
+        ],
+        [
+          0.0710887685418129,
+          0.9539555311203003,
+          -0.2914005517959595,
+          0.3031420111656189
+        ],
+        [
+          0.052466172724962234,
+          0.28815925121307373,
+          0.9561439752578735,
+          0.03132450580596924
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "query_image_id": 5,
+      "bufferx_rotation_error_deg": 4.477759925048604,
+      "bufferx_translation_error_cm": 7.116309743688457,
+      "bufferx_translation_x_cm": 4.8640261824887,
+      "bufferx_translation_y_cm": -4.87384291551784,
+      "bufferx_translation_z_cm": -1.7968775414691551,
+      "dgedi_rotation_error_deg": 3.7786495628471233,
+      "dgedi_translation_error_cm": 6.0210308181586285,
+      "dgedi_translation_x_cm": 5.75305280047155,
+      "dgedi_translation_y_cm": -1.7083836179166534,
+      "dgedi_translation_z_cm": -0.4864370485853486,
+      "rotation_delta_dgedi_minus_bufferx": -0.6991103622014805,
+      "translation_delta_cm_dgedi_minus_bufferx": -1.0952789255298283,
+      "rotation_winner": "dgedi",
+      "translation_winner": "dgedi",
+      "bufferx_pose_path": "/home/park/vm/code_bufferx/outputs/self_mesh_bufferx_5q_20260731_062514/queries/q000008_000005_i00/method_results/self_mesh/final_relative_pose.npy",
+      "dgedi_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_30000_5q_20260731_063250/queries/q000008_000005_i00/method_results/self_mesh/final_relative_pose.npy",
+      "bufferx_pose": [
+        [
+          0.9912184206839124,
+          -0.11596930417089878,
+          -0.06354261900344703,
+          0.04297300703049799
+        ],
+        [
+          0.09614394356835225,
+          0.9619337196233924,
+          -0.2558107869660883,
+          0.27445935288446394
+        ],
+        [
+          0.09079004524344392,
+          0.24745561215973838,
+          0.9646359948476522,
+          0.010198958507909195
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dgedi_pose": [
+        [
+          0.9909598543632797,
+          -0.11361388851572579,
+          -0.07134739922832853,
+          0.05186327321032649
+        ],
+        [
+          0.08875179546447005,
+          0.9539814655607666,
+          -0.28643058874423555,
+          0.3061139458604758
+        ],
+        [
+          0.10060658945687245,
+          0.2775090047239398,
+          0.9554407707728333,
+          0.02330336343674726
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "ground_truth_pose": [
+        [
+          0.9961575269699097,
+          -0.0861317589879036,
+          -0.015828026458621025,
+          -0.0056672547943890095
+        ],
+        [
+          0.07714233547449112,
+          0.9485978484153748,
+          -0.3069363236427307,
+          0.32319778203964233
+        ],
+        [
+          0.041450899094343185,
+          0.3045361340045929,
+          0.9515985250473022,
+          0.028167733922600746
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ]
+}
