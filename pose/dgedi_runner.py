@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -667,9 +668,22 @@ def run_dgedi_registration(
         str(icp_threshold),
     ]
 
+    # dGeDi 공식 checkpoint에는 argparse.Namespace 등
+    # 일반 pickle 객체가 포함되어 있다.
+    # 이 설정은 dGeDi 전용 subprocess에만 적용한다.
+    worker_environment = os.environ.copy()
+    worker_environment.pop(
+        "TORCH_FORCE_WEIGHTS_ONLY_LOAD",
+        None,
+    )
+    worker_environment[
+        "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"
+    ] = "1"
+
     completed = subprocess.run(
         command,
         cwd=repository,
+        env=worker_environment,
         capture_output=True,
         text=True,
         check=False,

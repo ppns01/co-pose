@@ -1,0 +1,178 @@
+{
+  "status": "completed",
+  "backend": "dgedi",
+  "pose_convention": "T_query_proxy_from_reference_proxy",
+  "translation_unit": "meter",
+  "reference_mesh": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/proxies/reference/scaled_candidates/candidate_02/mesh_scaled.obj",
+  "query_mesh": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/visible_scale_refinement/query/scaled_candidates/candidate_00/mesh_scaled.obj",
+  "normalization_diameter_m": 0.2569971185967672,
+  "ransac": {
+    "fitness": 0.962,
+    "inlier_rmse_m": 0.0036651286093019606,
+    "correspondence_count": 5772,
+    "pose": [
+      [
+        0.99921751485526,
+        0.024425826097712294,
+        0.031108471931655002,
+        0.005243420211708843
+      ],
+      [
+        -0.02380193582704851,
+        0.9995111739434465,
+        -0.020270200124280706,
+        0.0001446279101286912
+      ],
+      [
+        -0.031588381683196665,
+        0.019513897141207798,
+        0.9993104532431345,
+        -0.0022484281055257117
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "icp": {
+    "fitness": 0.9495,
+    "inlier_rmse_m": 0.002891206337717803,
+    "correspondence_count": 5697,
+    "pose": [
+      [
+        0.9966121142376884,
+        0.053055419749709114,
+        0.06284438073423237,
+        0.005101184873079457
+      ],
+      [
+        -0.051798333499608634,
+        0.9984268038615207,
+        -0.021467416647880874,
+        0.0003049398520146849
+      ],
+      [
+        -0.06388447699833107,
+        0.01813945330081675,
+        0.9977924302341665,
+        0.0004659176946912877
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "relative_pose_convention": "T_query_camera_from_reference_camera",
+  "reference_pose_camera_from_proxy": [
+    [
+      -0.16291366517543793,
+      0.9824663400650024,
+      0.09065909683704376,
+      0.019355742260813713
+    ],
+    [
+      -0.6104655265808105,
+      -0.17255978286266327,
+      0.7730168104171753,
+      -0.11250776797533035
+    ],
+    [
+      0.7751070857048035,
+      0.07059074193239212,
+      0.6278741955757141,
+      1.0318591594696045
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "query_pose_camera_from_proxy": [
+    [
+      -0.16044938564300537,
+      0.9833396077156067,
+      0.0854353979229927,
+      0.034251462668180466
+    ],
+    [
+      -0.6164087057113647,
+      -0.16742756962776184,
+      0.7694208025932312,
+      -0.1552303582429886
+    ],
+    [
+      0.7709061503410339,
+      0.07078996300697327,
+      0.633002758026123,
+      0.9792098999023438
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "relative_pose_query_from_reference": [
+    [
+      0.997875834279502,
+      0.005611188342035481,
+      -0.06490213344768503,
+      0.08205918167390128
+    ],
+    [
+      -0.009560316781179946,
+      0.9981104053541033,
+      -0.06069802848495225,
+      0.01704469600092398
+    ],
+    [
+      0.06443890529402764,
+      0.06118958781779479,
+      0.9960438790347734,
+      -0.03868101014777159
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "relative_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi/dgedi_relative_pose_query_from_reference.npy",
+  "command": [
+    "/home/park/miniforge3/envs/sam3_ros/bin/python3.10",
+    "/home/park/vm/code/pose/dgedi_runner.py",
+    "--worker",
+    "--repository",
+    "/home/park/vm/code/external_models/dGeDi",
+    "--config",
+    "/home/park/vm/code/external_models/dGeDi/config_dgedi.yaml",
+    "--reference-mesh",
+    "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/proxies/reference/scaled_candidates/candidate_02/mesh_scaled.obj",
+    "--query-mesh",
+    "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/visible_scale_refinement/query/scaled_candidates/candidate_00/mesh_scaled.obj",
+    "--output-directory",
+    "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi",
+    "--mode",
+    "multi_scale",
+    "--device",
+    "cuda",
+    "--sample-count",
+    "6000",
+    "--ransac-threshold",
+    "0.03",
+    "--icp-threshold",
+    "0.03"
+  ],
+  "stdout": "loading model\ncheckpoint keys: dict_keys(['args', 'epoch', 'model_state_dict', 'optim_state_dict', 'sched_state_dict'])\nForward pass time: 2.8027734756469727\nNormalizing features\nForward pass time: 0.0453190803527832\nNormalizing features\n[dGeDi proxy pose] /home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi/dgedi_proxy_pose_query_from_reference.npy\n[[ 9.96612114e-01  5.30554197e-02  6.28443807e-02  5.10118487e-03]\n [-5.17983335e-02  9.98426804e-01 -2.14674166e-02  3.04939852e-04]\n [-6.38844770e-02  1.81394533e-02  9.97792430e-01  4.65917695e-04]\n [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  1.00000000e+00]]\n",
+  "stderr": "/home/park/miniforge3/envs/sam3_ros/lib/python3.10/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers\n  warnings.warn(f\"Importing from {__name__} is deprecated, please import via timm.layers\", FutureWarning)\n/home/park/vm/code/external_models/dGeDi/core/dgedi_distilled.py:32: UserWarning: Environment variable TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD detected, since the`weights_only` argument was not explicitly passed to `torch.load`, forcing weights_only=False.\n  checkpoint = torch.load(model_config['weights_path'], map_location=device)\nW0731 04:03:17.080000 52629 site-packages/torch/fx/_symbolic_trace.py:53] is_fx_tracing will return true for both fx.symbolic_trace and torch.export. Please use is_fx_tracing_symbolic_tracing() for specifically fx.symbolic_trace or torch.compiler.is_compiling() for specifically torch.export/compile.\n"
+}

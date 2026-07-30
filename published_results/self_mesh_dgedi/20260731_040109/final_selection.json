@@ -1,0 +1,92 @@
+{
+  "status": "COMPLETED",
+  "method": "self_mesh",
+  "pose_convention": "T_query_camera_from_reference_camera",
+  "composition": "T_Cq_from_Pq @ T_Pq_from_Pr @ inv(T_Cr_from_Pr)",
+  "relative_pose_query_from_reference": [
+    [
+      0.997875834279502,
+      0.005611188342035481,
+      -0.06490213344768503,
+      0.08205918167390128
+    ],
+    [
+      -0.009560316781179946,
+      0.9981104053541033,
+      -0.06069802848495225,
+      0.01704469600092398
+    ],
+    [
+      0.06443890529402764,
+      0.06118958781779479,
+      0.9960438790347734,
+      -0.03868101014777159
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "sources": {
+    "mesh_registration_backend": "dgedi",
+    "reference_self_pose": [
+      [
+        -0.16291366517543793,
+        0.9824663400650024,
+        0.09065909683704376,
+        0.019355742260813713
+      ],
+      [
+        -0.6104655265808105,
+        -0.17255978286266327,
+        0.7730168104171753,
+        -0.11250776797533035
+      ],
+      [
+        0.7751070857048035,
+        0.07059074193239212,
+        0.6278741955757141,
+        1.0318591594696045
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "query_self_pose": [
+      [
+        -0.16044938564300537,
+        0.9833396077156067,
+        0.0854353979229927,
+        0.034251462668180466
+      ],
+      [
+        -0.6164087057113647,
+        -0.16742756962776184,
+        0.7694208025932312,
+        -0.1552303582429886
+      ],
+      [
+        0.7709061503410339,
+        0.07078996300697327,
+        0.633002758026123,
+        0.9792098999023438
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "dgedi_proxy_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi/dgedi_proxy_pose_query_from_reference.npy",
+    "dgedi_relative_pose_path": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi/dgedi_relative_pose_query_from_reference.npy",
+    "dgedi_metadata_path": "/home/park/vm/code/outputs/self_mesh_dgedi_20260731_040109/mesh_registration/dgedi/dgedi_registration.json",
+    "dgedi_registration_time_sec": 12.392355652999868
+  },
+  "selection_policy": "independent; no comparison, averaging, consensus, or rejection against another method"
+}
