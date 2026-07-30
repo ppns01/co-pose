@@ -46,3 +46,11 @@ bop_datasets/
 SuP/
 buffer-x/
 Codex/
+
+TRELLIS/
+
+# Runtime result logger lock
+**/.important_result_logger.lock
+
+# Local execution logs
+run_*.log

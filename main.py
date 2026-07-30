@@ -3571,7 +3571,404 @@ def _run_bufferx_best_effort(
         result.relative_pose_query_from_reference
     )
     return result
+def _save_published_result(
+    *,
+    config: PipelineConfig,
+    research_context: Any,
+    research_result: Any,
+    research_summary_path: Path,
+    final_result: Any,
+    reference_state: AlignedProxyState,
+    query_state: AlignedProxyState,
+    timings: dict[str, Any],
+) -> Path:
+    import csv
 
+    import numpy as np
+
+    from evaluation.important_result_logger import (
+        ConsistencyMetrics,
+        ImportantPairResult,
+        PoseErrorMetrics,
+        RuntimeMetrics,
+        ScaleDiagnostics,
+        save_important_pair_result,
+    )
+
+    def number(value: Any) -> float | None:
+        if value in (None, ""):
+            return None
+
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        return value if math.isfinite(value) else None
+
+    def error_metrics(
+        row: dict[str, str],
+    ) -> PoseErrorMetrics:
+        return PoseErrorMetrics(
+            rotation_error_deg=number(
+                row.get("rotation_error_deg")
+            ),
+            translation_error_cm=number(
+                row.get("translation_error_cm")
+            ),
+            translation_error_x_cm=number(
+                row.get(
+                    "translation_error_x_cm"
+                )
+            ),
+            translation_error_y_cm=number(
+                row.get(
+                    "translation_error_y_cm"
+                )
+            ),
+            translation_error_z_cm=number(
+                row.get(
+                    "translation_error_z_cm"
+                )
+            ),
+        )
+
+    with research_summary_path.open(
+        "r",
+        encoding="utf-8",
+    ) as file:
+        research_summary = json.load(file)
+
+    pair_id = str(
+        research_summary.get("pair_id", "")
+    ).strip()
+
+    if not pair_id:
+        raise RuntimeError(
+            "research_result_paths.json에 "
+            f"pair_id가 없습니다: {research_summary_path}"
+        )
+
+    with Path(
+        research_result.pair_results_path
+    ).open(
+        "r",
+        encoding="utf-8",
+        newline="",
+    ) as file:
+        rows = [
+            dict(row)
+            for row in csv.DictReader(file)
+            if (
+                row.get("run_id")
+                == research_context.run_id
+                and row.get("pair_id")
+                == pair_id
+            )
+        ]
+
+    def row_for(
+        *methods: str,
+    ) -> dict[str, str]:
+        matches = [
+            row
+            for row in rows
+            if row.get("method") in methods
+        ]
+
+        if not matches:
+            raise RuntimeError(
+                "research CSV 행이 없습니다: "
+                f"methods={methods}, "
+                f"run_id={research_context.run_id}, "
+                f"pair_id={pair_id}"
+            )
+
+        return matches[-1]
+
+    reference_row = row_for(
+        "ref_only"
+    )
+
+    query_row = row_for(
+        "query_only"
+    )
+
+    final_row = row_for(
+        "dual_validated",
+        "dual_validated_reject",
+    )
+
+    pair_score = (
+        final_result.best_pair_score
+        or (
+            final_result.evaluated_pair_scores[0]
+            if final_result.evaluated_pair_scores
+            else None
+        )
+    )
+
+    if pair_score is None:
+        raise RuntimeError(
+            "최종 pair score가 없어 "
+            "중요 결과를 저장할 수 없습니다."
+        )
+
+    consistency_pair = (
+        pair_score.consistency_pair
+    )
+
+    visible_scale_enabled = bool(
+        config.visible_scale_refinement_enabled
+        and (
+            config
+            .visible_scale_refinement_reference_enabled
+            or config
+            .visible_scale_refinement_query_enabled
+        )
+    )
+
+    experiment_name = (
+        f"linemod_obj_{config.object_id:02d}_"
+        f"{config.pose_path}"
+    )
+
+    important_result = ImportantPairResult(
+        experiment_name=experiment_name,
+        comparison_group=experiment_name,
+        variant=(
+            "ON"
+            if visible_scale_enabled
+            else "OFF"
+        ),
+        visible_scale_enabled=(
+            visible_scale_enabled
+        ),
+        run_id=research_context.run_id,
+        pair_id=pair_id,
+        dataset=(
+            final_row.get("dataset")
+            or "linemod"
+        ),
+        split=config.split,
+        object_id=config.object_id,
+        object_name=config.object_name,
+        reference_scene_id=(
+            reference_state
+            .generated
+            .frame
+            .scene_id
+        ),
+        reference_image_id=(
+            reference_state
+            .generated
+            .frame
+            .image_id
+        ),
+        reference_instance_index=(
+            reference_state
+            .generated
+            .frame
+            .instance_index
+        ),
+        query_scene_id=(
+            query_state
+            .generated
+            .frame
+            .scene_id
+        ),
+        query_image_id=(
+            query_state
+            .generated
+            .frame
+            .image_id
+        ),
+        query_instance_index=(
+            query_state
+            .generated
+            .frame
+            .instance_index
+        ),
+        method=config.pose_path,
+        status=final_result.status,
+        rejection_reason=(
+            final_row.get(
+                "rejection_reason"
+            )
+            or None
+        ),
+        selected_path=(
+            final_result.selected_path_name
+        ),
+        git_commit=(
+            research_context.git_commit
+            or None
+        ),
+        config_hash=(
+            research_context.config_hash
+            or None
+        ),
+        reference_scale=ScaleDiagnostics(
+            selected_scale_m=number(
+                final_row.get(
+                    "reference_mesh_scale"
+                )
+            ),
+        ),
+        query_scale=ScaleDiagnostics(
+            selected_scale_m=number(
+                final_row.get(
+                    "query_mesh_scale"
+                )
+            ),
+        ),
+        consistency=ConsistencyMetrics(
+            rotation_difference_deg=float(
+                consistency_pair
+                .rotation_difference_deg
+            ),
+            translation_difference_cm=(
+                float(
+                    consistency_pair
+                    .translation_difference_m
+                )
+                * 100.0
+            ),
+            normalized_translation_difference=(
+                float(
+                    consistency_pair
+                    .translation_difference_normalized
+                )
+            ),
+            selection_score=number(
+                final_row.get(
+                    "final_selection_score"
+                )
+            ),
+            top1_top2_margin=number(
+                final_row.get(
+                    "top1_top2_margin"
+                )
+            ),
+        ),
+        reference_path_error=(
+            error_metrics(reference_row)
+        ),
+        query_path_error=(
+            error_metrics(query_row)
+        ),
+        final_error=(
+            error_metrics(final_row)
+        ),
+        runtime=RuntimeMetrics(
+            total_time_sec=number(
+                final_row.get(
+                    "total_time_sec"
+                )
+            ),
+            visible_scale_time_sec=number(
+                timings.get(
+                    "visible_scale_time_sec"
+                )
+            ),
+            foundationpose_time_sec=number(
+                final_row.get(
+                    "foundationpose_time_sec"
+                )
+            ),
+            bufferx_time_sec=number(
+                timings.get(
+                    "bufferx_registration_time_sec"
+                )
+            ),
+        ),
+        extra={
+            "final_loss": (
+                final_result.final_loss
+            ),
+            "confidence_raw": (
+                final_result.confidence
+            ),
+            "bidirectional_consistency_score": (
+                number(
+                    final_row.get(
+                        "bidirectional_consistency_score"
+                    )
+                )
+            ),
+            "mask_score": number(
+                final_row.get(
+                    "mask_score"
+                )
+            ),
+            "depth_score": number(
+                final_row.get(
+                    "depth_score"
+                )
+            ),
+            "source_validation_score": (
+                number(
+                    final_row.get(
+                        "source_validation_score"
+                    )
+                )
+            ),
+            "research_pair_results_csv": (
+                str(
+                    research_result
+                    .pair_results_path
+                )
+            ),
+        },
+    )
+
+    def load_pose(
+        path: Path | None,
+    ) -> Any:
+        if path is None:
+            return None
+
+        return np.load(
+            Path(path),
+            allow_pickle=False,
+        )
+
+    saved_result = save_important_pair_result(
+        output_root=(
+            PROJECT_ROOT
+            / "published_results"
+        ),
+        result=important_result,
+        reference_pose_query_from_reference=(
+            load_pose(
+                research_result
+                .reference_pose_path
+            )
+        ),
+        query_pose_query_from_reference=(
+            load_pose(
+                research_result
+                .query_pose_path
+            )
+        ),
+        final_pose_query_from_reference=(
+            load_pose(
+                research_result
+                .final_pose_path
+            )
+        ),
+        ground_truth_pose_query_from_reference=(
+            load_pose(
+                research_result
+                .ground_truth_pose_path
+            )
+        ),
+        config_path=(
+            research_context.config_path
+        ),
+    )
+
+    return saved_result.pair_json_path
 
 def _run_aligned_pair(
     *,
@@ -4443,6 +4840,39 @@ def _run_aligned_pair(
         / "research"
         / "research_result_paths.json"
     )
+
+    try:
+        published_result_path = (
+            _save_published_result(
+                config=config,
+                research_context=(
+                    research_context
+                ),
+                research_result=research_result,
+                research_summary_path=(
+                    research_summary_path
+                ),
+                final_result=final_result,
+                reference_state=reference_state,
+                query_state=query_state,
+                timings=timing_values,
+            )
+        )
+
+        print(
+            "[Published result] "
+            f"{published_result_path}"
+        )
+
+    except Exception as error:
+        print(
+            "[Published result warning] "
+            "중요 결과 저장에 실패했습니다: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+
+        traceback.print_exc()
 
     print(f"[Final status] {final_result.status}")
     print(f"[Final summary] {summary_path}")

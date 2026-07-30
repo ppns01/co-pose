@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "updated_at_utc": "2026-07-30T17:23:37+00:00",
+  "pair_result_count": 1,
+  "variants": {
+    "OFF": {
+      "count": 0,
+      "consistent_count": 0,
+      "reject_count": 0,
+      "consistency_rate": null,
+      "metrics": {
+        "reference_path_rotation_error_deg": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "reference_path_translation_error_cm": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "query_path_rotation_error_deg": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "query_path_translation_error_cm": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "final_rotation_error_deg": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "final_translation_error_cm": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "path_rotation_difference_deg": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "path_translation_difference_cm": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "normalized_translation_difference": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "proxy_scale_difference_percent": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        },
+        "total_time_sec": {
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null
+        }
+      }
+    },
+    "ON": {
+      "count": 1,
+      "consistent_count": 1,
+      "reject_count": 0,
+      "consistency_rate": 1.0,
+      "metrics": {
+        "reference_path_rotation_error_deg": {
+          "mean": 1.726600854043822,
+          "median": 1.726600854043822,
+          "min": 1.726600854043822,
+          "max": 1.726600854043822
+        },
+        "reference_path_translation_error_cm": {
+          "mean": 3.1016712719888555,
+          "median": 3.1016712719888555,
+          "min": 3.1016712719888555,
+          "max": 3.1016712719888555
+        },
+        "query_path_rotation_error_deg": {
+          "mean": 0.7642457113488732,
+          "median": 0.7642457113488732,
+          "min": 0.7642457113488732,
+          "max": 0.7642457113488732
+        },
+        "query_path_translation_error_cm": {
+          "mean": 1.3500500386951988,
+          "median": 1.3500500386951988,
+          "min": 1.3500500386951988,
+          "max": 1.3500500386951988
+        },
+        "final_rotation_error_deg": {
+          "mean": 0.7642457113488732,
+          "median": 0.7642457113488732,
+          "min": 0.7642457113488732,
+          "max": 0.7642457113488732
+        },
+        "final_translation_error_cm": {
+          "mean": 1.3500500386951988,
+          "median": 1.3500500386951988,
+          "min": 1.3500500386951988,
+          "max": 1.3500500386951988
+        },
+        "path_rotation_difference_deg": {
+          "mean": 1.1862699839639415,
+          "median": 1.1862699839639415,
+          "min": 1.1862699839639415,
+          "max": 1.1862699839639415
+        },
+        "path_translation_difference_cm": {
+          "mean": 2.2247771803343466,
+          "median": 2.2247771803343466,
+          "min": 2.2247771803343466,
+          "max": 2.2247771803343466
+        },
+        "normalized_translation_difference": {
+          "mean": 0.07016753160546675,
+          "median": 0.07016753160546675,
+          "min": 0.07016753160546675,
+          "max": 0.07016753160546675
+        },
+        "proxy_scale_difference_percent": {
+          "mean": 4.914979194342428,
+          "median": 4.914979194342428,
+          "min": 4.914979194342428,
+          "max": 4.914979194342428
+        },
+        "total_time_sec": {
+          "mean": 147.82167708499998,
+          "median": 147.82167708499998,
+          "min": 147.82167708499998,
+          "max": 147.82167708499998
+        }
+      }
+    }
+  },
+  "off_on_comparison_count": 0,
+  "status_transitions": {
+    "REJECT->REJECT": 0,
+    "REJECT->CONSISTENT": 0,
+    "CONSISTENT->REJECT": 0,
+    "CONSISTENT->CONSISTENT": 0
+  }
+}
