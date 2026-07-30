@@ -1,0 +1,5 @@
+version: 1
+dinov3:
+  enabled: false
+instantmesh:
+  offline: true
