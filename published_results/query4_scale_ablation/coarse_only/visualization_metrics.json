@@ -1,0 +1,8 @@
+{
+  "rotation_error_deg": 39.48467804181144,
+  "translation_error_cm": 64.88086096886217,
+  "reference_mesh_diagonal_m": 0.3467497537861599,
+  "query_mesh_diagonal_m": 0.2758315176031801,
+  "query_reference_diagonal_ratio": 0.7954771837366177,
+  "image_path": "/home/park/vm/code/outputs/dgedi_coarse_only_q4_20260731_080454/visualizations/dgedi_registration_estimate_vs_gt.png"
+}
