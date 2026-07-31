@@ -18,6 +18,264 @@ class SilhouetteMeshRefinementResult:
     refined_points_camera: np.ndarray
     displacement: np.ndarray
     diagnostics: dict
+    intermediate_points_camera: dict[str, np.ndarray]
+
+
+def _unique_undirected_edges(
+    triangles: np.ndarray,
+) -> np.ndarray:
+    triangles = np.asarray(
+        triangles,
+        dtype=np.int64,
+    )
+
+    edges = np.concatenate(
+        [
+            triangles[:, [0, 1]],
+            triangles[:, [1, 2]],
+            triangles[:, [2, 0]],
+        ],
+        axis=0,
+    )
+
+    edges = np.sort(
+        edges,
+        axis=1,
+    )
+
+    return np.unique(
+        edges,
+        axis=0,
+    )
+
+
+def _quantile_or_none(
+    values: np.ndarray,
+    quantile: float,
+) -> float | None:
+    values = np.asarray(
+        values,
+        dtype=np.float64,
+    )
+
+    if values.size == 0:
+        return None
+
+    return float(
+        np.quantile(
+            values,
+            quantile,
+        )
+    )
+
+
+def _geometry_stage_diagnostics(
+    *,
+    reference_points: np.ndarray,
+    stage_points: np.ndarray,
+    triangles: np.ndarray,
+    laplacian: scipy.sparse.csr_matrix,
+) -> dict:
+    reference_points = np.asarray(
+        reference_points,
+        dtype=np.float64,
+    )
+
+    stage_points = np.asarray(
+        stage_points,
+        dtype=np.float64,
+    )
+
+    triangles = np.asarray(
+        triangles,
+        dtype=np.int64,
+    )
+
+    displacement = (
+        stage_points
+        - reference_points
+    )
+
+    laplacian_displacement = np.asarray(
+        laplacian @ displacement,
+        dtype=np.float64,
+    )
+
+    roughness = np.linalg.norm(
+        laplacian_displacement,
+        axis=1,
+    )
+
+    edges = _unique_undirected_edges(
+        triangles
+    )
+
+    reference_edge_lengths = np.linalg.norm(
+        reference_points[edges[:, 0]]
+        - reference_points[edges[:, 1]],
+        axis=1,
+    )
+
+    stage_edge_lengths = np.linalg.norm(
+        stage_points[edges[:, 0]]
+        - stage_points[edges[:, 1]],
+        axis=1,
+    )
+
+    valid_edges = (
+        reference_edge_lengths
+        > 1e-12
+    )
+
+    edge_ratios = (
+        stage_edge_lengths[valid_edges]
+        / reference_edge_lengths[valid_edges]
+    )
+
+    reference_faces = (
+        reference_points[triangles]
+    )
+
+    stage_faces = (
+        stage_points[triangles]
+    )
+
+    reference_cross = np.cross(
+        reference_faces[:, 1]
+        - reference_faces[:, 0],
+        reference_faces[:, 2]
+        - reference_faces[:, 0],
+    )
+
+    stage_cross = np.cross(
+        stage_faces[:, 1]
+        - stage_faces[:, 0],
+        stage_faces[:, 2]
+        - stage_faces[:, 0],
+    )
+
+    reference_area2 = np.linalg.norm(
+        reference_cross,
+        axis=1,
+    )
+
+    stage_area2 = np.linalg.norm(
+        stage_cross,
+        axis=1,
+    )
+
+    valid_faces = (
+        reference_area2
+        > 1e-14
+    )
+
+    area_ratios = (
+        stage_area2[valid_faces]
+        / reference_area2[valid_faces]
+    )
+
+    orientation_dot = np.einsum(
+        "ij,ij->i",
+        reference_cross,
+        stage_cross,
+    )
+
+    flipped_mask = (
+        valid_faces
+        & (stage_area2 > 1e-14)
+        & (orientation_dot < 0.0)
+    )
+
+    degenerate_threshold = np.maximum(
+        reference_area2 * 1e-3,
+        1e-14,
+    )
+
+    degenerate_mask = (
+        stage_area2
+        <= degenerate_threshold
+    )
+
+    return {
+        "laplacian_roughness_p50_m":
+            _quantile_or_none(
+                roughness,
+                0.50,
+            ),
+        "laplacian_roughness_p95_m":
+            _quantile_or_none(
+                roughness,
+                0.95,
+            ),
+        "laplacian_roughness_p99_m":
+            _quantile_or_none(
+                roughness,
+                0.99,
+            ),
+        "laplacian_roughness_max_m": (
+            float(roughness.max())
+            if roughness.size
+            else None
+        ),
+        "edge_ratio_p01":
+            _quantile_or_none(
+                edge_ratios,
+                0.01,
+            ),
+        "edge_ratio_p50":
+            _quantile_or_none(
+                edge_ratios,
+                0.50,
+            ),
+        "edge_ratio_p99":
+            _quantile_or_none(
+                edge_ratios,
+                0.99,
+            ),
+        "edge_below_half_fraction": (
+            float(
+                np.mean(
+                    edge_ratios < 0.5
+                )
+            )
+            if edge_ratios.size
+            else None
+        ),
+        "edge_over_double_fraction": (
+            float(
+                np.mean(
+                    edge_ratios > 2.0
+                )
+            )
+            if edge_ratios.size
+            else None
+        ),
+        "triangle_area_ratio_p01":
+            _quantile_or_none(
+                area_ratios,
+                0.01,
+            ),
+        "triangle_area_ratio_p50":
+            _quantile_or_none(
+                area_ratios,
+                0.50,
+            ),
+        "triangle_area_ratio_p99":
+            _quantile_or_none(
+                area_ratios,
+                0.99,
+            ),
+        "flipped_triangle_count": int(
+            np.count_nonzero(
+                flipped_mask
+            )
+        ),
+        "degenerate_triangle_count": int(
+            np.count_nonzero(
+                degenerate_mask
+            )
+        ),
+    }
 
 
 def _signed_distance_to_mask(mask_bool: np.ndarray) -> np.ndarray:
@@ -363,11 +621,29 @@ def refine_mesh_for_silhouette_and_depth(
     active_mask[band_indices] = True
     active_mask[interior_indices] = True
 
+    intermediate_points_camera: dict[
+        str,
+        np.ndarray,
+    ] = {
+        "M0_original_camera":
+            points_camera.copy(),
+        "M1_raw_target_camera":
+            points_camera
+            + displacement,
+    }
+
     displacement_norm = np.linalg.norm(displacement, axis=1)
     clip_scale = np.minimum(
         1.0, maximum_displacement_m / np.clip(displacement_norm, 1e-12, None)
     )
     displacement = displacement * clip_scale[:, None]
+
+    intermediate_points_camera[
+        "M2_target_preclip_camera"
+    ] = (
+        points_camera
+        + displacement
+    )
 
     laplacian = _build_uniform_laplacian(triangles, vertex_count)
     active_indices = np.nonzero(active_mask)[0]
@@ -393,11 +669,25 @@ def refine_mesh_for_silhouette_and_depth(
         )[0]
         solved_displacement[:, coordinate] = solution
 
+    intermediate_points_camera[
+        "M3_post_lsqr_preclip_camera"
+    ] = (
+        points_camera
+        + solved_displacement
+    )
+
     solved_norm = np.linalg.norm(solved_displacement, axis=1)
     clip_scale2 = np.minimum(
         1.0, maximum_displacement_m / np.clip(solved_norm, 1e-12, None)
     )
     solved_displacement = solved_displacement * clip_scale2[:, None]
+
+    intermediate_points_camera[
+        "M4_post_vertex_clip_camera"
+    ] = (
+        points_camera
+        + solved_displacement
+    )
 
     refined_points = points_camera + solved_displacement
 
@@ -410,6 +700,24 @@ def refine_mesh_for_silhouette_and_depth(
     else:
         scale_before_reprojection = None
         scale_after_reprojection = None
+
+    intermediate_points_camera[
+        "M5_post_scale_camera"
+    ] = refined_points.copy()
+
+    geometry_stages = {
+        stage_name:
+            _geometry_stage_diagnostics(
+                reference_points=points_camera,
+                stage_points=stage_points,
+                triangles=triangles,
+                laplacian=laplacian,
+            )
+        for (
+            stage_name,
+            stage_points,
+        ) in intermediate_points_camera.items()
+    }
 
     z2 = refined_points[:, 2]
     u2 = np.round(refined_points[:, 0] / z2 * fx + cx).astype(np.int64)
@@ -424,6 +732,18 @@ def refine_mesh_for_silhouette_and_depth(
     boundary_distance_after = float(
         np.abs(sdf[v2[inb2], u2[inb2]]).mean()
     ) if inb2.any() else None
+
+    # --- 표면 거칠기(roughness) 진단: IoU/boundary distance는 2D 투영의
+    #     전체 평균/집계 지표라, 소수의 정점이 스파이크로 튀어나와도
+    #     나머지 대부분이 조금씩 개선되면 평균은 오히려 좋아질 수 있다
+    #     -- 즉 국소적으로 표면이 지저분해지는 것을 전혀 못 잡는다.
+    #     같은 Laplacian(이웃 평균과의 차이)을 보정 전/후 좌표에 각각
+    #     적용해서, 각 정점이 자기 이웃 평균에서 얼마나 벗어났는지를
+    #     비교한다 -- 매끈한 표면은 이 값이 작고, 스파이크는 크다.
+    roughness_before = np.linalg.norm(laplacian @ points_camera, axis=1)
+    roughness_after = np.linalg.norm(laplacian @ refined_points, axis=1)
+    roughness_before_p95 = float(np.quantile(roughness_before, 0.95))
+    roughness_after_p95 = float(np.quantile(roughness_after, 0.95))
 
     displacement_final_norm = np.linalg.norm(solved_displacement, axis=1)
     moved = displacement_final_norm > 1e-6
@@ -451,10 +771,16 @@ def refine_mesh_for_silhouette_and_depth(
         "scale_before_reprojection_m": scale_before_reprojection,
         "scale_after_reprojection_m": scale_after_reprojection,
         "target_scale_m": target_scale_m,
+        "roughness_before_p95_m": roughness_before_p95,
+        "roughness_after_p95_m": roughness_after_p95,
+        "geometry_stages": geometry_stages,
     }
 
     return SilhouetteMeshRefinementResult(
         refined_points_camera=refined_points,
         displacement=solved_displacement,
         diagnostics=diagnostics,
+        intermediate_points_camera=(
+            intermediate_points_camera
+        ),
     )

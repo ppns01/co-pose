@@ -23,6 +23,55 @@ class ObservationRefinementResult:
     diagnostics: dict
 
 
+def _write_camera_stage_mesh(
+    *,
+    path: Path,
+    points_camera: np.ndarray,
+    triangles: np.ndarray,
+) -> None:
+    mesh = o3d.geometry.TriangleMesh()
+
+    mesh.vertices = (
+        o3d.utility.Vector3dVector(
+            np.asarray(
+                points_camera,
+                dtype=np.float64,
+            )
+        )
+    )
+
+    mesh.triangles = (
+        o3d.utility.Vector3iVector(
+            np.asarray(
+                triangles,
+                dtype=np.int32,
+            )
+        )
+    )
+
+    mesh.compute_triangle_normals()
+    mesh.compute_vertex_normals()
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    success = o3d.io.write_triangle_mesh(
+        str(path),
+        mesh,
+        write_ascii=False,
+        compressed=False,
+        print_progress=False,
+    )
+
+    if not success:
+        raise OSError(
+            "Failed to write refinement "
+            f"stage mesh: {path}"
+        )
+
+
 def _silhouette_quality(
     *,
     points_camera: np.ndarray,
@@ -115,6 +164,20 @@ def _acceptance_gate(diagnostics: dict) -> tuple[bool, tuple[str, ...]]:
             f"({diagnostics['displacement_max_m'] * 1000:.2f}mm)"
         )
 
+    roughness_before = diagnostics.get("roughness_before_p95_m")
+    roughness_after = diagnostics.get("roughness_after_p95_m")
+    if roughness_before is not None and roughness_after is not None:
+        roughness_ceiling = max(roughness_before * 1.5, 0.001)
+        if roughness_after > roughness_ceiling:
+            reasons.append(
+                "surface roughness got worse "
+                f"({roughness_before * 1000:.2f}mm -> "
+                f"{roughness_after * 1000:.2f}mm p95, "
+                f"ceiling={roughness_ceiling * 1000:.2f}mm) -- "
+                "IoU/boundary distance improved but local surface "
+                "quality did not"
+            )
+
     return len(reasons) == 0, tuple(reasons)
 
 
@@ -180,14 +243,57 @@ def refine_self_alignment_with_observation(
         diameter_fn=_diameter,
     )
 
-    accepted, reasons = _acceptance_gate(refinement.diagnostics)
+    diagnostics = dict(
+        refinement.diagnostics
+    )
+
+    stage_directory = (
+        output_directory
+        / "refinement_stages"
+    )
+
+    stage_mesh_paths: dict[
+        str,
+        str,
+    ] = {}
+
+    for (
+        stage_name,
+        stage_points,
+    ) in (
+        refinement
+        .intermediate_points_camera
+        .items()
+    ):
+        stage_path = (
+            stage_directory
+            / f"{stage_name}.obj"
+        )
+
+        _write_camera_stage_mesh(
+            path=stage_path,
+            points_camera=stage_points,
+            triangles=triangles,
+        )
+
+        stage_mesh_paths[
+            stage_name
+        ] = str(stage_path)
+
+    diagnostics[
+        "intermediate_mesh_paths"
+    ] = stage_mesh_paths
+
+    accepted, reasons = _acceptance_gate(
+        diagnostics
+    )
 
     if not accepted:
         return ObservationRefinementResult(
             self_alignment=self_alignment,
             accepted=False,
             reasons=reasons,
-            diagnostics=refinement.diagnostics,
+            diagnostics=diagnostics,
         )
 
     refined_proxy_points = (
@@ -246,7 +352,6 @@ def refine_self_alignment_with_observation(
         refined_pose if pose_refinement_accepted else pose_camera_from_proxy
     )
 
-    diagnostics = dict(refinement.diagnostics)
     diagnostics.update(
         {
             "pose_refinement_accepted": pose_refinement_accepted,
