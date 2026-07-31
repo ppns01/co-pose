@@ -1,0 +1,14 @@
+version: 1
+
+scale:
+  visible_refinement:
+    enabled: true
+    reference_enabled: true
+    query_enabled: true
+
+alignment:
+  weights:
+    mask: 0.30
+    depth: 0.40
+    free_space: 0.40
+    boundary: 0.10

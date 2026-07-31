@@ -56,3 +56,39 @@ TRELLIS/
 run_*.log
 
 external_models/dGeDi/
+
+# ============================================================
+# Large model weights
+# ============================================================
+/sam3/weights/
+/dinov3/weights/
+/external_models/dGeDi/checkpoints/
+/dGeDi/checkpoints/
+/FoundationPose/weights/
+
+# Prevent accidental model-weight commits
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# ============================================================
+# Nested Git repository metadata
+# ============================================================
+/TRELLIS/.git/
+/FoundationPose/.git/
+/external_models/dGeDi/.git/
+/dGeDi/.git/
+
+# Generated outputs and local archives
+/outputs/
+/outputs.zip
+/code.zip
+
+# Local datasets and generic weights
+/datasets/
+/weights/
+
+# Python cache
+__pycache__/
+*.pyc

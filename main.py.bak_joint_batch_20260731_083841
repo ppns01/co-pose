@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -3034,16 +3034,6 @@ def _refine_aligned_states_visible_scale(
         )
 
     if policy == "joint_shared":
-        normalized_states = tuple(aligned_states)
-
-        if len(normalized_states) == 1:
-            print(
-                "[Joint shared scale deferred] "
-                f"view={normalized_states[0].generated.view_name}; "
-                "waiting for reference/query pair"
-            )
-            return normalized_states
-
         if not (
             config
             .visible_scale_refinement_reference_enabled
@@ -4810,96 +4800,6 @@ def _run_aligned_pair(
             save_independent_pose_path,
         )
 
-        if (
-            os.environ.get(
-                "COPOSE_OBSERVATION_REFINEMENT_ENABLED",
-                "0",
-            ).strip()
-            == "1"
-        ):
-            from mesh_refinement.observation_refinement import (
-                refine_self_alignment_with_observation,
-            )
-            from pose.foundationpose_runner import (
-                FoundationPoseRunner,
-            )
-
-            with FoundationPoseRunner(
-                repository_path=(
-                    config.foundationpose_repository
-                ),
-                output_root=(
-                    output_root
-                    / "observation_refinement"
-                    / "foundationpose"
-                ),
-                top_k=1,
-                refine_iterations=config.refine_iterations,
-                debug=config.foundationpose_debug,
-                device=config.device,
-            ) as refine_runner:
-                reference_refinement = (
-                    refine_self_alignment_with_observation(
-                        self_alignment=(
-                            reference_state.self_alignment
-                        ),
-                        prepared_view=reference_view,
-                        foundationpose_runner=refine_runner,
-                        output_directory=(
-                            output_root
-                            / "observation_refinement"
-                            / "reference"
-                        ),
-                    )
-                )
-
-                query_refinement = (
-                    refine_self_alignment_with_observation(
-                        self_alignment=(
-                            query_state.self_alignment
-                        ),
-                        prepared_view=query_view,
-                        foundationpose_runner=refine_runner,
-                        output_directory=(
-                            output_root
-                            / "observation_refinement"
-                            / "query"
-                        ),
-                    )
-                )
-
-            print(
-                "[Observation refinement] reference "
-                f"accepted={reference_refinement.accepted} "
-                f"reasons={list(reference_refinement.reasons)} "
-                "pose_refinement_accepted="
-                f"{reference_refinement.diagnostics.get('pose_refinement_accepted')} "
-                f"iou_t0={reference_refinement.diagnostics.get('iou_t0')} "
-                f"iou_t1={reference_refinement.diagnostics.get('iou_t1')}"
-            )
-            print(
-                "[Observation refinement] query "
-                f"accepted={query_refinement.accepted} "
-                f"reasons={list(query_refinement.reasons)} "
-                "pose_refinement_accepted="
-                f"{query_refinement.diagnostics.get('pose_refinement_accepted')} "
-                f"iou_t0={query_refinement.diagnostics.get('iou_t0')} "
-                f"iou_t1={query_refinement.diagnostics.get('iou_t1')}"
-            )
-
-            reference_state = replace(
-                reference_state,
-                self_alignment=(
-                    reference_refinement.self_alignment
-                ),
-            )
-            query_state = replace(
-                query_state,
-                self_alignment=(
-                    query_refinement.self_alignment
-                ),
-            )
-
         dgedi_repository = Path(
             os.environ.get(
                 "DGEDI_REPOSITORY",
@@ -4989,72 +4889,6 @@ def _run_aligned_pair(
             time.perf_counter()
             - dgedi_started_at
         )
-
-        try:
-            from evaluation.mesh_on_photo_visualizer import (
-                render_mesh_on_photo,
-            )
-
-            self_aligned_root = (
-                output_root
-                / "mesh_registration"
-                / "dgedi"
-                / "self_aligned_meshes"
-            )
-
-            mesh_on_photo_path = render_mesh_on_photo(
-                reference_mesh_path=(
-                    self_aligned_root
-                    / "reference_self_aligned_in_reference_camera.obj"
-                ),
-                query_mesh_path=(
-                    self_aligned_root
-                    / "query_self_aligned_in_query_camera.obj"
-                ),
-                reference_camera_k=np.asarray(
-                    reference_view.view.camera_matrix,
-                    dtype=np.float64,
-                ),
-                query_camera_k=np.asarray(
-                    query_view.view.camera_matrix,
-                    dtype=np.float64,
-                ),
-                reference_rgb=np.asarray(
-                    reference_view.view.rgb
-                ),
-                query_rgb=np.asarray(
-                    query_view.view.rgb
-                ),
-                reference_mask_bool=np.asarray(
-                    reference_view.segmentation.mask_bool,
-                    dtype=bool,
-                ),
-                query_mask_bool=np.asarray(
-                    query_view.segmentation.mask_bool,
-                    dtype=bool,
-                ),
-                output_path=(
-                    output_root
-                    / "visualizations"
-                    / "mesh_on_photo.png"
-                ),
-                title=(
-                    "Final self-aligned mesh on real photo "
-                    "(pose + observation refinement 최종 상태)"
-                ),
-            )
-
-            print(
-                f"[mesh-on-photo visualization] {mesh_on_photo_path}"
-            )
-
-        except Exception as visualization_error:
-            # 시각화는 부가 기능이다 -- 실패해도 파이프라인 본 실행은
-            # 계속되어야 한다.
-            print(
-                "[mesh-on-photo visualization 실패, 무시하고 계속] "
-                f"{visualization_error}"
-            )
 
         independent_result = (
             save_independent_pose_path(
@@ -6596,32 +6430,6 @@ def run_batch_pipeline(
                         output_root=query_root,
                     )
                 )
-                pair_reference_state = reference_state
-
-                if (
-                    os.environ.get(
-                        "COPOSE_VISIBLE_SCALE_POLICY",
-                        "independent",
-                    ).strip().lower()
-                    == "joint_shared"
-                ):
-                    print(
-                        "[Batch joint shared scale] "
-                        f"query_image_id={query_frame.image_id}"
-                    )
-
-                    (
-                        pair_reference_state,
-                        query_state,
-                    ) = _refine_aligned_states_joint_shared_scale(
-                        config=config,
-                        aligned_states=(
-                            reference_state,
-                            query_state,
-                        ),
-                        output_root=query_root,
-                    )
-
                 timing_values[
                     "source_anchor_time_sec"
                 ] = (
@@ -6638,7 +6446,7 @@ def run_batch_pipeline(
                 outcome = _run_aligned_pair(
                     config=config,
                     reference_state=(
-                        pair_reference_state
+                        reference_state
                     ),
                     query_state=query_state,
                     reference_dino=reference_dino,

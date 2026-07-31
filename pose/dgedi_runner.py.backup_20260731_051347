@@ -60,90 +60,7 @@ def _rigid(value: Any, name: str) -> np.ndarray:
         )
 
     return matrix
-def _save_self_aligned_mesh(
-    *,
-    source_mesh_path: Path,
-    pose_camera_from_proxy: Any,
-    output_mesh_path: Path,
-) -> Path:
-    """
-    FoundationPose self pose를 mesh vertex에 직접 적용하고
-    camera 좌표계의 새 mesh 파일로 저장한다.
 
-    output vertex:
-        p_camera = T_camera_from_proxy @ p_proxy
-    """
-    import open3d as o3d
-
-    source_mesh_path = (
-        Path(source_mesh_path)
-        .expanduser()
-        .resolve()
-    )
-
-    output_mesh_path = (
-        Path(output_mesh_path)
-        .expanduser()
-        .resolve()
-    )
-
-    if not source_mesh_path.is_file():
-        raise FileNotFoundError(
-            f"Source mesh not found: "
-            f"{source_mesh_path}"
-        )
-
-    pose = _rigid(
-        pose_camera_from_proxy,
-        "FoundationPose self pose",
-    )
-
-    mesh = o3d.io.read_triangle_mesh(
-        str(source_mesh_path),
-        enable_post_processing=True,
-    )
-
-    if len(mesh.vertices) == 0:
-        raise ValueError(
-            f"Mesh has no vertices: "
-            f"{source_mesh_path}"
-        )
-
-    # FoundationPose self pose를 실제 mesh에 bake한다.
-    mesh.transform(pose)
-
-    if not mesh.has_vertex_normals():
-        mesh.compute_vertex_normals()
-
-    if not mesh.has_triangle_normals():
-        mesh.compute_triangle_normals()
-
-    output_mesh_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    saved = o3d.io.write_triangle_mesh(
-        str(output_mesh_path),
-        mesh,
-        write_ascii=False,
-        compressed=False,
-        print_progress=False,
-    )
-
-    if not saved:
-        raise IOError(
-            "Failed to save self-aligned mesh: "
-            f"{output_mesh_path}"
-        )
-
-    if not output_mesh_path.is_file():
-        raise FileNotFoundError(
-            "Self-aligned mesh was not created: "
-            f"{output_mesh_path}"
-        )
-
-    return output_mesh_path
 
 def compose_dgedi_relative_pose(
     *,
@@ -230,108 +147,30 @@ def _mesh_to_cloud(
 def _diameter(
     points: np.ndarray,
     block: int = 256,
-    maximum_points: int = 6000,
 ) -> float:
-    """
-    Point cloud diameter를 근사 계산한다.
-
-    dGeDi descriptor와 registration에는 전체 점을 사용하지만,
-    O(N^2)인 diameter 계산에는 최대 maximum_points만 사용한다.
-    각 축의 최소·최대점은 항상 포함하여 물체 크기 손실을 줄인다.
-    """
     points = np.asarray(
         points,
         dtype=np.float64,
     )
 
-    if (
-        points.ndim != 2
-        or points.shape[1] != 3
-        or len(points) < 2
-        or not np.all(np.isfinite(points))
-    ):
-        raise ValueError(
-            "Invalid points for diameter: "
-            f"shape={points.shape}"
-        )
-
-    original_count = len(points)
-
-    if original_count > maximum_points:
-        extreme_indices = np.unique(
-            np.concatenate(
-                [
-                    np.argmin(
-                        points,
-                        axis=0,
-                    ),
-                    np.argmax(
-                        points,
-                        axis=0,
-                    ),
-                ]
-            )
-        ).astype(
-            np.int64,
-            copy=False,
-        )
-
-        remaining_count = (
-            maximum_points
-            - len(extreme_indices)
-        )
-
-        all_indices = np.arange(
-            original_count,
-            dtype=np.int64,
-        )
-
-        available_mask = np.ones(
-            original_count,
-            dtype=bool,
-        )
-
-        available_mask[
-            extreme_indices
-        ] = False
-
-        available_indices = (
-            all_indices[available_mask]
-        )
-
-        rng = np.random.default_rng(0)
-
-        sampled_indices = rng.choice(
-            available_indices,
-            size=remaining_count,
-            replace=False,
-        )
-
-        selected_indices = np.concatenate(
-            [
-                extreme_indices,
-                sampled_indices,
-            ]
-        )
-
-        points = points[
-            selected_indices
-        ]
-
-    maximum_squared = 0.0
+    maximum = 0.0
 
     for start in range(
         0,
         len(points),
         block,
     ):
-        current = points[
-            start : start + block
-        ]
-
         delta = (
-            current[:, None, :]
-            - points[None, :, :]
+            points[
+                start : start + block,
+                None,
+                :,
+            ]
+            - points[
+                None,
+                :,
+                :,
+            ]
         )
 
         squared = np.einsum(
@@ -341,31 +180,12 @@ def _diameter(
             optimize=True,
         )
 
-        maximum_squared = max(
-            maximum_squared,
+        maximum = max(
+            maximum,
             float(squared.max()),
         )
 
-    diameter = float(
-        np.sqrt(maximum_squared)
-    )
-
-    if (
-        not np.isfinite(diameter)
-        or diameter <= 0.0
-    ):
-        raise ValueError(
-            f"Invalid diameter: {diameter}"
-        )
-
-    print(
-        "[dGeDi diameter] "
-        f"source_points={original_count}, "
-        f"diameter_points={len(points)}, "
-        f"diameter_m={diameter:.9f}"
-    )
-
-    return diameter
+    return float(np.sqrt(maximum))
 
 
 def _normalize(
@@ -490,12 +310,6 @@ def _worker(
 
     import open3d as o3d
     import torch
-
-    # registration_ransac_based_on_feature_matching()은 seed 인자를 노출하지
-    # 않고 open3d의 전역 RNG를 그대로 쓴다. 고정하지 않으면 완전히 동일한
-    # mesh 쌍에도 실행마다 다른 RANSAC 결과가 나온다 -- 실측 결과 동일 mesh
-    # 반복 실행에서 rotation이 5도, translation이 8.7cm까지 흔들렸다.
-    o3d.utility.random.seed(0)
 
     from core.dgedi_distilled import (
         dgedi,
@@ -683,14 +497,10 @@ def _worker(
     metadata = {
         "status": "completed",
         "backend": "dgedi",
-"pose_convention": (
-    "T_query_camera_from_"
-    "reference_camera"
-),
-"input_meshes": (
-    "FoundationPose self-aligned "
-    "meshes with pose baked into vertices"
-),
+        "pose_convention": (
+            "T_query_proxy_from_"
+            "reference_proxy"
+        ),
         "translation_unit": "meter",
         "reference_mesh": (
             str(reference_mesh)
@@ -764,7 +574,7 @@ def run_dgedi_registration(
     output_directory: Path,
     mode: str = "multi_scale",
     device: str = "cuda",
-    sample_count: int = 30000,
+    sample_count: int = 6000,
     ransac_threshold: float = 0.03,
     icp_threshold: float = 0.03,
 ) -> DGeDiRegistrationResult:
@@ -792,27 +602,15 @@ def run_dgedi_registration(
         .resolve()
     )
 
-    raw_reference_mesh = Path(
+    reference_mesh = Path(
         reference_self_alignment
         .scaled_mesh_path
     ).expanduser().resolve()
 
-    raw_query_mesh = Path(
+    query_mesh = Path(
         query_self_alignment
         .scaled_mesh_path
     ).expanduser().resolve()
-
-    reference_self = _rigid(
-        reference_self_alignment
-        .pose_camera_from_proxy,
-        "reference FoundationPose self pose",
-    )
-
-    query_self = _rigid(
-        query_self_alignment
-        .pose_camera_from_proxy,
-        "query FoundationPose self pose",
-    )
 
     if not repository.is_dir():
         raise FileNotFoundError(
@@ -829,76 +627,19 @@ def run_dgedi_registration(
             f"dGeDi config: {config_path}"
         )
 
-    if not raw_reference_mesh.is_file():
+    if not reference_mesh.is_file():
         raise FileNotFoundError(
-            "Reference generated mesh: "
-            f"{raw_reference_mesh}"
+            f"Reference mesh: {reference_mesh}"
         )
 
-    if not raw_query_mesh.is_file():
+    if not query_mesh.is_file():
         raise FileNotFoundError(
-            "Query generated mesh: "
-            f"{raw_query_mesh}"
+            f"Query mesh: {query_mesh}"
         )
 
     output.mkdir(
         parents=True,
         exist_ok=True,
-    )
-
-    self_aligned_mesh_root = (
-        output
-        / "self_aligned_meshes"
-    )
-
-    # Reference mesh:
-    # P_r -> C_r
-    reference_mesh = (
-        _save_self_aligned_mesh(
-            source_mesh_path=(
-                raw_reference_mesh
-            ),
-            pose_camera_from_proxy=(
-                reference_self
-            ),
-            output_mesh_path=(
-                self_aligned_mesh_root
-                / (
-                    "reference_self_aligned_"
-                    "in_reference_camera.obj"
-                )
-            ),
-        )
-    )
-
-    # Query mesh:
-    # P_q -> C_q
-    query_mesh = (
-        _save_self_aligned_mesh(
-            source_mesh_path=(
-                raw_query_mesh
-            ),
-            pose_camera_from_proxy=(
-                query_self
-            ),
-            output_mesh_path=(
-                self_aligned_mesh_root
-                / (
-                    "query_self_aligned_"
-                    "in_query_camera.obj"
-                )
-            ),
-        )
-    )
-
-    print(
-        "[Reference self-aligned mesh] "
-        f"{reference_mesh}"
-    )
-
-    print(
-        "[Query self-aligned mesh] "
-        f"{query_mesh}"
     )
 
     command = [
@@ -979,22 +720,38 @@ def run_dgedi_registration(
             f"dGeDi metadata: {metadata_path}"
         )
 
-    # dGeDi 입력 mesh가 이미 각각 C_r, C_q 좌표계에
-    # 저장되어 있으므로 dGeDi source->target transform은
-    # 곧바로 T_Cq_from_Cr이다.
-    direct_relative_pose = _rigid(
+    proxy_pose = _rigid(
         np.load(
             proxy_pose_path,
             allow_pickle=False,
         ),
-        (
-            "dGeDi direct relative "
-            "camera pose"
-        ),
+        "dGeDi proxy pose",
+    )
+
+    reference_self = _rigid(
+        reference_self_alignment
+        .pose_camera_from_proxy,
+        "reference self pose",
+    )
+
+    query_self = _rigid(
+        query_self_alignment
+        .pose_camera_from_proxy,
+        "query self pose",
     )
 
     relative_pose = (
-        direct_relative_pose.copy()
+        compose_dgedi_relative_pose(
+            reference_pose_camera_from_proxy=(
+                reference_self
+            ),
+            query_pose_camera_from_proxy=(
+                query_self
+            ),
+            proxy_pose_query_from_reference=(
+                proxy_pose
+            ),
+        )
     )
 
     relative_pose_path = (
@@ -1019,39 +776,15 @@ def run_dgedi_registration(
 
     metadata.update(
         {
-            "strategy": (
-                "foundationpose_self_pose_"
-                "baked_into_mesh_then_dgedi"
-            ),
-            "input_mesh_coordinate_frames": {
-                "reference": (
-                    "reference_camera"
-                ),
-                "query": (
-                    "query_camera"
-                ),
-            },
-            "raw_reference_mesh": str(
-                raw_reference_mesh
-            ),
-            "raw_query_mesh": str(
-                raw_query_mesh
-            ),
-            "reference_self_aligned_mesh": (
-                str(reference_mesh)
-            ),
-            "query_self_aligned_mesh": (
-                str(query_mesh)
+            "relative_pose_convention": (
+                "T_query_camera_from_"
+                "reference_camera"
             ),
             "reference_pose_camera_from_proxy": (
                 reference_self.tolist()
             ),
             "query_pose_camera_from_proxy": (
                 query_self.tolist()
-            ),
-            "relative_pose_convention": (
-                "T_query_camera_from_"
-                "reference_camera"
             ),
             "relative_pose_query_from_reference": (
                 relative_pose.tolist()
@@ -1077,12 +810,8 @@ def run_dgedi_registration(
         )
 
     return DGeDiRegistrationResult(
-        # 입력 mesh에 FoundationPose self pose가 이미
-        # bake되어 있으므로 dGeDi 출력은 직접
-        # T_query_camera_from_reference_camera이다.
-        # 필드명은 기존 main.py 호환을 위해 유지한다.
         proxy_pose_query_from_reference=(
-            relative_pose
+            proxy_pose
         ),
         relative_pose_query_from_reference=(
             relative_pose
@@ -1152,7 +881,7 @@ def _parse_worker_args() -> (
     parser.add_argument(
         "--sample-count",
         type=int,
-        default=30000,
+        default=6000,
     )
 
     parser.add_argument(

@@ -1407,6 +1407,138 @@ class FoundationPoseRunner:
             metadata_path=metadata_path,
         )
 
+    def refine_pose_locally(
+        self,
+        *,
+        mesh_path: Path,
+        prepared_view: PreparedView,
+        initial_pose_camera_from_mesh: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """
+        이미 알려진 초기 pose(T0) 근처에서만 지역적으로 pose를 재추정한다.
+
+        register()와 달리 회전 그리드 전체(~90개 이상)를 다시 샘플링하고
+        재점수화하지 않는다 -- FoundationPose 자체의 refiner 네트워크만
+        한 번 호출하는 track_one() 경로를 쓴다. Depth/silhouette로 mesh
+        형상을 국소 보정한 뒤, 그 형상 변화 때문에 더 이상 최적이 아닐
+        수 있는 T0를 약간만 조정하려는 용도다 -- 대칭 물체에서 완전히
+        다른 pose branch로 튈 위험이 있는 전역 재탐색과는 다르다.
+
+        Scale은 건드리지 않는다 -- FoundationPose는애초에 scale을
+        추정하지 않고 입력 mesh의 vertex 크기를 그대로 쓰므로, 호출자가
+        이미 최종 S*로 스케일된 mesh를 넘겨주면 자동으로 고정된다.
+
+        FoundationPose는 reset_object() 호출마다 mesh AABB 중심을
+        원점으로 재배치한다(get_tf_to_centered_mesh()). pose_last는
+        이 "centered mesh" 컨벤션으로 표현되어야 하므로, 호출자가 들고
+        있는 T0(원본 mesh 좌표계 기준)를 변환해서 넣고, 결과도 다시
+        원본 좌표계로 되돌려서 반환한다.
+        """
+
+        self.load()
+
+        view_name = (
+            prepared_view.view.source.name
+        )
+
+        if view_name not in (
+            "reference",
+            "query",
+        ):
+            raise ValueError(
+                f"지원하지 않는 view입니다: {view_name}"
+            )
+
+        debug_directory = (
+            self._output_root
+            / view_name
+            / "local_pose_refine"
+            / "debug"
+        )
+
+        mesh = self._load_mesh(mesh_path)
+
+        self._set_object(
+            mesh=mesh,
+            mesh_path=mesh_path,
+            debug_directory=debug_directory,
+        )
+
+        (
+            rgb,
+            depth_m,
+            camera_matrix,
+            _mask_uint8,
+        ) = self._prepare_inputs(
+            prepared_view
+        )
+
+        if self._estimator is None:
+            raise RuntimeError(
+                "FoundationPose estimator가 생성되지 않았습니다."
+            )
+
+        torch = self._torch
+
+        tf_to_centered = (
+            self._estimator
+            .get_tf_to_centered_mesh()
+            .data.cpu().numpy()
+            .astype(np.float64)
+        )
+
+        pose_last_centered = (
+            initial_pose_camera_from_mesh
+            @ np.linalg.inv(tf_to_centered)
+        )
+
+        self._estimator.pose_last = torch.as_tensor(
+            pose_last_centered,
+            device="cuda",
+            dtype=torch.float,
+        )
+
+        try:
+            with _temporary_working_directory(
+                self._repository_path
+            ):
+                self._estimator.track_one(
+                    rgb=rgb,
+                    depth=depth_m,
+                    K=camera_matrix,
+                    iteration=(
+                        self._refine_iterations
+                    ),
+                )
+
+        except Exception as error:
+            raise RuntimeError(
+                "FoundationPose track_one() 실행에 실패했습니다: "
+                f"view={view_name}, mesh={mesh_path}"
+            ) from error
+
+        refined_pose_centered = (
+            self._estimator.pose_last
+            .reshape(4, 4)
+            .data.cpu().numpy()
+            .astype(np.float64)
+        )
+
+        refined_pose_camera_from_mesh = (
+            refined_pose_centered @ tf_to_centered
+        )
+
+        # track_one()의 refiner 네트워크가 반환하는 회전 행렬은 완벽한
+        # SO(3)가 아닐 수 있다(부동소수점 누적 오차) -- SVD로 가장
+        # 가까운 회전 행렬에 투영해서 downstream 검증을 통과시킨다.
+        # 오차가 큰 경우(진짜 깨진 pose)는 여기서도 예외가 난다.
+        sanitized = _sanitize_rigid_pose(
+            refined_pose_camera_from_mesh,
+            "refine_pose_locally() 결과",
+        )
+
+        return sanitized.astype(np.float64)
+
     def run_candidates(
         self,
         *,

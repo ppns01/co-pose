@@ -922,6 +922,61 @@ def build_visible_scale_candidates(
     )
 
 
+
+def build_absolute_scale_candidates(
+    *,
+    normalization_result: MeshNormalizationResult,
+    original_scale_result: ScaleInitializationResult,
+    absolute_scales_m: Sequence[float],
+    output_directory: Path,
+) -> tuple[ScaledMeshCandidate, ...]:
+    """
+    동일한 absolute metric scale bank를 한 normalized mesh에 적용한다.
+
+    Reference와 Query normalized mesh에 동일한 absolute_scales_m을
+    전달하면 candidate index와 physical scale이 정확히 대응한다.
+    """
+    normalized_scales: list[float] = []
+
+    for raw_scale in absolute_scales_m:
+        scale_m = float(raw_scale)
+
+        if not np.isfinite(scale_m) or scale_m <= 0.0:
+            raise ValueError(
+                "Absolute scale candidate는 유한한 양수여야 합니다: "
+                f"{scale_m}"
+            )
+
+        if not any(
+            np.isclose(
+                scale_m,
+                existing,
+                atol=1e-12,
+                rtol=0.0,
+            )
+            for existing in normalized_scales
+        ):
+            normalized_scales.append(scale_m)
+
+    if not normalized_scales:
+        raise ValueError(
+            "Absolute scale candidate가 없습니다."
+        )
+
+    shared_scale_result = ScaleInitializationResult(
+        visible_diagonal_m=(
+            original_scale_result.visible_diagonal_m
+        ),
+        scale_candidates_m=tuple(normalized_scales),
+    )
+
+    return build_scaled_mesh_candidates(
+        normalization_result=normalization_result,
+        scale_result=shared_scale_result,
+        output_directory=output_directory,
+    )
+
+
 @dataclass(frozen=True)
 class LocalScaleRefinementResult:
     """

@@ -1,0 +1,7 @@
+version: 1
+
+scale:
+  visible_refinement:
+    enabled: true
+    reference_enabled: true
+    query_enabled: true

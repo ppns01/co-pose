@@ -98,7 +98,8 @@ scale:
     save_point_cloud: false
   visible_refinement:
     enabled: true
-    reference_enabled: false
+    # 동일 물체의 Reference와 Query에 같은 scale 정책을 적용한다.
+    reference_enabled: true
     query_enabled: true
     minimum_loss_improvement_ratio: 0.01
 
