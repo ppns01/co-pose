@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,10 @@ from core.types import PreparedView
 from mesh_refinement.silhouette_mesh_refiner import (
     refine_mesh_for_silhouette_and_depth,
 )
+from mesh_refinement.dense_strip_arap_refiner import (
+    refine_mesh_with_dense_strip_arap,
+)
+from mesh_refinement.stage_observation_visualizer import visualize_refinement_stages
 from pose.dgedi_runner import _diameter
 from pose.relative_pose_builder import SelfAlignmentSelection
 
@@ -233,7 +239,32 @@ def refine_self_alignment_with_observation(
 
     target_scale_m = float(_diameter(points_camera))
 
-    refinement = refine_mesh_for_silhouette_and_depth(
+    refinement_mode = os.environ.get(
+        "COPOSE_REFINEMENT_MODE",
+        "legacy",
+    ).strip().lower()
+
+    if refinement_mode == "dense_strip_arap":
+        refinement_function = (
+            refine_mesh_with_dense_strip_arap
+        )
+    elif refinement_mode == "legacy":
+        refinement_function = (
+            refine_mesh_for_silhouette_and_depth
+        )
+    else:
+        raise ValueError(
+            "COPOSE_REFINEMENT_MODE must be "
+            "'legacy' or 'dense_strip_arap', "
+            f"got {refinement_mode!r}"
+        )
+
+    print(
+        "[Observation refinement mode] "
+        f"{refinement_mode}"
+    )
+
+    refinement = refinement_function(
         points_camera=points_camera,
         triangles=triangles,
         mask_bool=mask_bool,
@@ -242,6 +273,12 @@ def refine_self_alignment_with_observation(
         target_scale_m=target_scale_m,
         diameter_fn=_diameter,
     )
+
+    if refinement_mode == "dense_strip_arap":
+        print(
+            "[Dense-strip ARAP topology] "
+            f"{refinement.diagnostics.get('topology_safety')}"
+        )
 
     diagnostics = dict(
         refinement.diagnostics
@@ -283,6 +320,42 @@ def refine_self_alignment_with_observation(
     diagnostics[
         "intermediate_mesh_paths"
     ] = stage_mesh_paths
+
+    observation_visualization = (
+        visualize_refinement_stages(
+            output_directory=(
+                output_directory
+                / "observation_stage_comparison"
+            ),
+            rgb=np.asarray(
+                prepared_view.view.rgb,
+                dtype=np.uint8,
+            ),
+            observed_mask=mask_bool,
+            observed_depth_m=depth_m,
+            camera_k=camera_k,
+            triangles=triangles,
+            stages=(
+                refinement
+                .intermediate_points_camera
+            ),
+        )
+    )
+
+    diagnostics[
+        "observation_stage_metrics"
+    ] = observation_visualization[
+        "metrics"
+    ]
+
+    diagnostics[
+        "observation_stage_visualization"
+    ] = {
+        key: value
+        for key, value
+        in observation_visualization.items()
+        if key != "metrics"
+    }
 
     accepted, reasons = _acceptance_gate(
         diagnostics
