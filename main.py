@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -273,9 +273,6 @@ class PipelineConfig:
     visible_scale_refinement_reference_enabled: bool
     visible_scale_refinement_query_enabled: bool
     visible_scale_minimum_loss_improvement_ratio: float
-    pose_trust_region_max_rotation_delta_deg: float
-    pose_trust_region_max_translation_ratio: float
-    pose_trust_region_max_iou_drop: float
     alignment_weight_mask: float
     alignment_weight_depth: float
     alignment_weight_free_space: float
@@ -1101,17 +1098,6 @@ def build_config(
         visible_scale_minimum_loss_improvement_ratio=(
             args
             .visible_scale_minimum_loss_improvement_ratio
-        ),
-        pose_trust_region_max_rotation_delta_deg=(
-            args
-            .pose_trust_region_max_rotation_delta_deg
-        ),
-        pose_trust_region_max_translation_ratio=(
-            args
-            .pose_trust_region_max_translation_ratio
-        ),
-        pose_trust_region_max_iou_drop=(
-            args.pose_trust_region_max_iou_drop
         ),
         alignment_weight_mask=(
             args.alignment_weight_mask
@@ -2840,7 +2826,11 @@ def _refine_aligned_states_visible_scale(
     """
     policy = os.environ.get(
         "COPOSE_VISIBLE_SCALE_POLICY",
-        "independent",
+        (
+            "joint_shared"
+            if config.pose_path == "self_mesh"
+            else "independent"
+        ),
     ).strip().lower()
 
     if policy == "independent":
@@ -3583,7 +3573,198 @@ def _refine_aligned_states_joint_shared_scale(
         f"{selected_record['joint_mean_normalized_loss']:.6f}"
     )
 
-    return tuple(refined_states)
+    return _refine_aligned_states_axis_scale(
+        config=config,
+        aligned_states=tuple(refined_states),
+        output_root=output_root,
+    )
+
+
+def _refine_aligned_states_axis_scale(
+    *,
+    config: PipelineConfig,
+    aligned_states: Sequence[AlignedProxyState],
+    output_root: Path,
+) -> tuple[AlignedProxyState, ...]:
+    """Fit Sx/Sy/Sz for both proxies, then recompute self poses once."""
+    from pose.alignment_evaluator import (
+        evaluate_foundationpose_alignments,
+        select_best_self_alignment,
+    )
+    from pose.alignment_scorer import AlignmentScoreWeights
+    from pose.foundationpose_process_pool import (
+        FoundationPoseProcessJob,
+        run_foundationpose_jobs,
+    )
+    from pose.mesh_renderer import FoundationPoseMeshRenderer
+    from scale.axis_scale_refiner import (
+        refine_axis_scale_against_observation,
+    )
+
+    states = tuple(aligned_states)
+    if len(states) != 2:
+        raise ValueError(
+            "Axis-scale refinement requires reference/query states: "
+            f"count={len(states)}"
+        )
+    by_name = {
+        state.generated.view_name: state
+        for state in states
+    }
+    if set(by_name) != {"reference", "query"}:
+        raise ValueError(
+            "Axis-scale refinement requires reference and query"
+        )
+
+    print(
+        "==== [STAGE] Reference/Query Sx,Sy,Sz refinement: "
+        "shared S* 유지, 각 관측 mask+depth에 축별 잔차 스케일을 "
+        "맞춥니다 ===="
+    )
+    weights = AlignmentScoreWeights(
+        mask=config.alignment_weight_mask,
+        depth=config.alignment_weight_depth,
+        free_space=config.alignment_weight_free_space,
+        boundary=config.alignment_weight_boundary,
+    )
+    search_results: dict[str, Any] = {}
+
+    with FoundationPoseMeshRenderer(
+        foundationpose_repository_path=(
+            config.foundationpose_repository
+        ),
+        device=config.device,
+        render_batch_size=config.renderer_batch_size,
+        maximum_texture_size=(
+            config.renderer_maximum_texture_size
+        ),
+    ) as renderer:
+        for view_name in ("reference", "query"):
+            state = by_name[view_name]
+            result = refine_axis_scale_against_observation(
+                prepared_view=state.generated.prepared_view,
+                source_candidate=state.selected_candidate,
+                pose_camera_from_proxy=(
+                    state.self_alignment.pose_camera_from_proxy
+                ),
+                renderer=renderer,
+                output_directory=(
+                    output_root
+                    / "axis_scale_refinement"
+                    / view_name
+                ),
+                weights=weights,
+                depth_trim_quantile=(
+                    config.alignment_depth_trim_quantile
+                ),
+                minimum_depth_overlap_pixels=(
+                    config.alignment_minimum_depth_overlap_pixels
+                ),
+                free_space_absolute_tolerance_m=(
+                    config.alignment_free_space_absolute_tolerance_m
+                ),
+                free_space_relative_tolerance=(
+                    config.alignment_free_space_relative_tolerance
+                ),
+            )
+            search_results[view_name] = result
+            print(
+                "[Axis scale selected] "
+                f"view={view_name} "
+                f"Sxyz={tuple(round(v, 6) for v in result.axis_scales)} "
+                f"product={math.prod(result.axis_scales):.6f} "
+                f"loss={result.alignment_score.total_loss:.6f} "
+                f"summary={result.summary_path}"
+            )
+
+    jobs = tuple(
+        FoundationPoseProcessJob(
+            job_name=f"axis_scale_self:{view_name}",
+            candidate=search_results[view_name].candidate,
+            prepared_view=by_name[view_name].generated.prepared_view,
+        )
+        for view_name in ("reference", "query")
+    )
+    pose_results = run_foundationpose_jobs(
+        jobs=jobs,
+        repository_path=config.foundationpose_repository,
+        output_root=(
+            output_root / "foundationpose" / "self_axis_scale"
+        ),
+        top_k=config.top_k,
+        refine_iterations=config.refine_iterations,
+        device=config.device,
+        worker_count=config.foundationpose_workers,
+        debug=config.foundationpose_debug,
+    )
+    result_by_name = {
+        result.view_name: result
+        for result in pose_results
+    }
+    if set(result_by_name) != {"reference", "query"}:
+        raise RuntimeError(
+            "Axis-scale FoundationPose results are incomplete: "
+            f"views={sorted(result_by_name)}"
+        )
+
+    refined_by_name: dict[str, AlignedProxyState] = {}
+    with FoundationPoseMeshRenderer(
+        foundationpose_repository_path=(
+            config.foundationpose_repository
+        ),
+        device=config.device,
+        render_batch_size=config.renderer_batch_size,
+        maximum_texture_size=(
+            config.renderer_maximum_texture_size
+        ),
+    ) as renderer:
+        for view_name in ("reference", "query"):
+            state = by_name[view_name]
+            pose_result = result_by_name[view_name]
+            evaluation = evaluate_foundationpose_alignments(
+                prepared_view=state.generated.prepared_view,
+                candidate_results=(pose_result,),
+                renderer=renderer,
+                output_directory=(
+                    output_root
+                    / "self_evaluation_axis_scale"
+                    / view_name
+                ),
+                weights=weights,
+                depth_trim_quantile=(
+                    config.alignment_depth_trim_quantile
+                ),
+                min_depth_overlap_pixels=(
+                    config.alignment_minimum_depth_overlap_pixels
+                ),
+                free_space_absolute_tolerance_m=(
+                    config.alignment_free_space_absolute_tolerance_m
+                ),
+                free_space_relative_tolerance=(
+                    config.alignment_free_space_relative_tolerance
+                ),
+            )
+            self_alignment = select_best_self_alignment(evaluation)
+            refined_by_name[view_name] = AlignedProxyState(
+                generated=state.generated,
+                self_results=(pose_result,),
+                self_evaluation=evaluation,
+                self_alignment=self_alignment,
+                selected_candidate=(
+                    search_results[view_name].candidate
+                ),
+            )
+            print(
+                "[Axis-scale self pose] "
+                f"view={view_name} "
+                f"rank={self_alignment.hypothesis_rank} "
+                f"loss={self_alignment.alignment_loss}"
+            )
+
+    return tuple(
+        refined_by_name[state.generated.view_name]
+        for state in states
+    )
 
 
 def _refine_aligned_states_visible_scale_independent(
@@ -4531,155 +4712,9 @@ def _run_aligned_pair(
             save_independent_pose_path,
         )
 
-        observation_refinement_sources: dict[str, Any] = {
-            "enabled": False,
-            "reference_accepted": False,
-            "query_accepted": False,
-        }
-
-        if (
-            os.environ.get(
-                "COPOSE_OBSERVATION_REFINEMENT_ENABLED",
-                "0",
-            ).strip()
-            == "1"
-        ):
-            print(
-                "==== [STAGE] Shape refinement "
-                "(observation refinement: ARAP/legacy + "
-                "2nd FoundationPose pose refinement) "
-                "-- reference, then query ===="
-            )
-
-            from mesh_refinement.observation_refinement import (
-                refine_self_alignment_with_observation,
-            )
-            from pose.foundationpose_runner import (
-                FoundationPoseRunner,
-            )
-
-            with FoundationPoseRunner(
-                repository_path=(
-                    config.foundationpose_repository
-                ),
-                output_root=(
-                    output_root
-                    / "observation_refinement"
-                    / "foundationpose"
-                ),
-                top_k=1,
-                refine_iterations=config.refine_iterations,
-                debug=config.foundationpose_debug,
-                device=config.device,
-            ) as refine_runner:
-                reference_refinement = (
-                    refine_self_alignment_with_observation(
-                        self_alignment=(
-                            reference_state.self_alignment
-                        ),
-                        prepared_view=reference_view,
-                        foundationpose_runner=refine_runner,
-                        output_directory=(
-                            output_root
-                            / "observation_refinement"
-                            / "reference"
-                        ),
-                        pose_trust_region_max_rotation_delta_deg=(
-                            config
-                            .pose_trust_region_max_rotation_delta_deg
-                        ),
-                        pose_trust_region_max_translation_ratio=(
-                            config
-                            .pose_trust_region_max_translation_ratio
-                        ),
-                        pose_trust_region_max_iou_drop=(
-                            config
-                            .pose_trust_region_max_iou_drop
-                        ),
-                    )
-                )
-
-                query_refinement = (
-                    refine_self_alignment_with_observation(
-                        self_alignment=(
-                            query_state.self_alignment
-                        ),
-                        prepared_view=query_view,
-                        foundationpose_runner=refine_runner,
-                        output_directory=(
-                            output_root
-                            / "observation_refinement"
-                            / "query"
-                        ),
-                        pose_trust_region_max_rotation_delta_deg=(
-                            config
-                            .pose_trust_region_max_rotation_delta_deg
-                        ),
-                        pose_trust_region_max_translation_ratio=(
-                            config
-                            .pose_trust_region_max_translation_ratio
-                        ),
-                        pose_trust_region_max_iou_drop=(
-                            config
-                            .pose_trust_region_max_iou_drop
-                        ),
-                    )
-                )
-
-            print(
-                "[Observation refinement] reference "
-                f"accepted={reference_refinement.accepted} "
-                f"reasons={list(reference_refinement.reasons)} "
-                "pose_refinement_accepted="
-                f"{reference_refinement.diagnostics.get('pose_refinement_accepted')} "
-                f"iou_t0={reference_refinement.diagnostics.get('iou_t0')} "
-                f"iou_t1={reference_refinement.diagnostics.get('iou_t1')}"
-            )
-            print(
-                "[Observation refinement] query "
-                f"accepted={query_refinement.accepted} "
-                f"reasons={list(query_refinement.reasons)} "
-                "pose_refinement_accepted="
-                f"{query_refinement.diagnostics.get('pose_refinement_accepted')} "
-                f"iou_t0={query_refinement.diagnostics.get('iou_t0')} "
-                f"iou_t1={query_refinement.diagnostics.get('iou_t1')}"
-            )
-
-            reference_state = replace(
-                reference_state,
-                self_alignment=(
-                    reference_refinement.self_alignment
-                ),
-            )
-            query_state = replace(
-                query_state,
-                self_alignment=(
-                    query_refinement.self_alignment
-                ),
-            )
-
-            observation_refinement_sources = {
-                "enabled": True,
-                "reference_accepted": bool(
-                    reference_refinement.accepted
-                ),
-                "reference_reasons": list(
-                    reference_refinement.reasons
-                ),
-                "reference_mesh_passed_to_dgedi": str(
-                    reference_state.self_alignment.scaled_mesh_path
-                ),
-                "query_accepted": bool(query_refinement.accepted),
-                "query_reasons": list(query_refinement.reasons),
-                "query_mesh_passed_to_dgedi": str(
-                    query_state.self_alignment.scaled_mesh_path
-                ),
-            }
-
         print(
             "==== [STAGE] Cross-view registration: "
-            "dGeDi (reference self-aligned mesh <-> "
-            "query self-aligned mesh) ===="
+            "dGeDi local proxy registration G=T(Pq<-Pr) ===="
         )
 
         dgedi_repository = Path(
@@ -4843,13 +4878,9 @@ def _run_aligned_pair(
         )
 
         if not dgedi_validation.accepted:
-            print("[Final status] REJECT")
-            print(f"[Final summary] {dgedi_validation.summary_path}")
-            return PairPipelineOutcome(
-                final_status="REJECT",
-                summary_path=dgedi_validation.summary_path,
-                pose_path=None,
-                visualization_path=None,
+            print(
+                "[dGeDi observation diagnostic warning] "
+                "관측 오차는 기록하지만 최종 pose를 차단하지 않습니다."
             )
 
         try:
@@ -4903,8 +4934,7 @@ def _run_aligned_pair(
                     / "mesh_on_photo.png"
                 ),
                 title=(
-                    "Final self-aligned mesh on real photo "
-                    "(pose + observation refinement 최종 상태)"
+                    "Final self-aligned axis-scaled mesh on real photo"
                 ),
             )
 
@@ -4932,12 +4962,11 @@ def _run_aligned_pair(
                     / "method_results"
                     / "self_mesh"
                 ),
-composition=(
-    "FoundationPose self poses baked "
-    "into generated meshes; "
-    "dGeDi directly estimates "
-    "T_Cq_from_Cr"
-),
+                composition=(
+                    "H = B @ G @ inv(A), where "
+                    "A=T_Cr_from_Pr, B=T_Cq_from_Pq, "
+                    "G=T_Pq_from_Pr"
+                ),
                 sources={
                     "mesh_registration_backend": (
                         "dgedi"
@@ -4977,9 +5006,6 @@ composition=(
                             "dgedi_registration_time_sec"
                         ]
                     ),
-                    "observation_refinement": (
-                        observation_refinement_sources
-                    ),
                     "dgedi_observation_validation": {
                         "accepted": dgedi_validation.accepted,
                         "summary_path": str(
@@ -5002,7 +5028,7 @@ composition=(
         )
 
         print(
-            "[dGeDi direct relative pose] "
+            "[dGeDi local proxy pose G] "
             f"{dgedi_result.proxy_pose_path}"
         )
 

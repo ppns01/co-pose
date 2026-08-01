@@ -685,14 +685,12 @@ def _worker(
     metadata = {
         "status": "completed",
         "backend": "dgedi",
-"pose_convention": (
-    "T_query_camera_from_"
-    "reference_camera"
-),
-"input_meshes": (
-    "FoundationPose self-aligned "
-    "meshes with pose baked into vertices"
-),
+        "pose_convention": (
+            "T_query_proxy_from_reference_proxy"
+        ),
+        "input_meshes": (
+            "metric local proxy meshes without camera pose baking"
+        ),
         "translation_unit": "meter",
         "reference_mesh": (
             str(reference_mesh)
@@ -903,6 +901,8 @@ def run_dgedi_registration(
         f"{query_mesh}"
     )
 
+    # dGeDi는 camera pose가 bake되지 않은 local proxy를 등록한다.
+    # 출력은 G=T_Pq_from_Pr이고, 아래에서 A/B와 합성한다.
     command = [
         str(python_path),
         str(Path(__file__).resolve()),
@@ -912,9 +912,9 @@ def run_dgedi_registration(
         "--config",
         str(config_path),
         "--reference-mesh",
-        str(reference_mesh),
+        str(raw_reference_mesh),
         "--query-mesh",
-        str(query_mesh),
+        str(raw_query_mesh),
         "--output-directory",
         str(output),
         "--mode",
@@ -981,22 +981,18 @@ def run_dgedi_registration(
             f"dGeDi metadata: {metadata_path}"
         )
 
-    # dGeDi 입력 mesh가 이미 각각 C_r, C_q 좌표계에
-    # 저장되어 있으므로 dGeDi source->target transform은
-    # 곧바로 T_Cq_from_Cr이다.
-    direct_relative_pose = _rigid(
+    proxy_pose = _rigid(
         np.load(
             proxy_pose_path,
             allow_pickle=False,
         ),
-        (
-            "dGeDi direct relative "
-            "camera pose"
-        ),
+        "dGeDi local proxy pose G=T_Pq_from_Pr",
     )
 
-    relative_pose = (
-        direct_relative_pose.copy()
+    relative_pose = compose_dgedi_relative_pose(
+        reference_pose_camera_from_proxy=reference_self,
+        query_pose_camera_from_proxy=query_self,
+        proxy_pose_query_from_reference=proxy_pose,
     )
 
     relative_pose_path = (
@@ -1022,16 +1018,12 @@ def run_dgedi_registration(
     metadata.update(
         {
             "strategy": (
-                "foundationpose_self_pose_"
-                "baked_into_mesh_then_dgedi"
+                "local_proxy_dgedi_then_"
+                "foundationpose_pose_composition"
             ),
             "input_mesh_coordinate_frames": {
-                "reference": (
-                    "reference_camera"
-                ),
-                "query": (
-                    "query_camera"
-                ),
+                "reference": "reference_proxy_local",
+                "query": "query_proxy_local",
             },
             "raw_reference_mesh": str(
                 raw_reference_mesh
@@ -1051,6 +1043,13 @@ def run_dgedi_registration(
             "query_pose_camera_from_proxy": (
                 query_self.tolist()
             ),
+            "proxy_pose_convention": (
+                "G=T_query_proxy_from_reference_proxy"
+            ),
+            "proxy_pose_query_from_reference": (
+                proxy_pose.tolist()
+            ),
+            "composition": "H = B @ G @ inv(A)",
             "relative_pose_convention": (
                 "T_query_camera_from_"
                 "reference_camera"
@@ -1079,12 +1078,8 @@ def run_dgedi_registration(
         )
 
     return DGeDiRegistrationResult(
-        # 입력 mesh에 FoundationPose self pose가 이미
-        # bake되어 있으므로 dGeDi 출력은 직접
-        # T_query_camera_from_reference_camera이다.
-        # 필드명은 기존 main.py 호환을 위해 유지한다.
         proxy_pose_query_from_reference=(
-            relative_pose
+            proxy_pose
         ),
         relative_pose_query_from_reference=(
             relative_pose

@@ -29,11 +29,63 @@ class DGeDiObservationValidationResult:
 
 
 def _default_raycast_function() -> RaycastFunction:
-    from mesh_refinement.iterative_contour_arap_refiner import (
-        _raycast_mesh,
-    )
-
     return _raycast_mesh
+
+
+def _raycast_mesh(
+    *,
+    points_camera: np.ndarray,
+    triangles: np.ndarray,
+    camera_k: np.ndarray,
+    image_height: int,
+    image_width: int,
+) -> dict[str, np.ndarray]:
+    """Render camera-frame triangles with Open3D ray casting."""
+    import open3d as o3d
+
+    points = np.asarray(points_camera, dtype=np.float64)
+    faces = np.asarray(triangles, dtype=np.int64)
+    intrinsic = np.asarray(camera_k, dtype=np.float64)
+
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(points)
+    mesh.triangles = o3d.utility.Vector3iVector(
+        faces.astype(np.int32, copy=False)
+    )
+    tensor_mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(tensor_mesh)
+
+    fx = float(intrinsic[0, 0])
+    fy = float(intrinsic[1, 1])
+    cx = float(intrinsic[0, 2])
+    cy = float(intrinsic[1, 2])
+    pixel_u, pixel_v = np.meshgrid(
+        np.arange(image_width, dtype=np.float32),
+        np.arange(image_height, dtype=np.float32),
+    )
+    ray_direction = np.stack(
+        [
+            (pixel_u - cx) / fx,
+            (pixel_v - cy) / fy,
+            np.ones_like(pixel_u),
+        ],
+        axis=-1,
+    )
+    rays = np.concatenate(
+        [np.zeros_like(ray_direction), ray_direction],
+        axis=-1,
+    ).astype(np.float32)
+    hit = scene.cast_rays(
+        o3d.core.Tensor(rays, dtype=o3d.core.Dtype.Float32)
+    )["t_hit"].numpy().astype(np.float64)
+    rendered_mask = np.isfinite(hit) & (hit > 0.0)
+    rendered_depth = hit.astype(np.float32)
+    rendered_depth[~rendered_mask] = 0.0
+    return {
+        "rendered_mask": rendered_mask,
+        "rendered_depth": rendered_depth,
+    }
 
 
 def _load_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
