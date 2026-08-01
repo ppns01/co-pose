@@ -101,7 +101,6 @@ POSE_PATH_CHOICES = (
     "combined",
     "self_mesh",
     "self_cross",
-    "cross_mesh",
 )
 
 
@@ -180,59 +179,6 @@ def _default_instantmesh_python() -> Path:
     return Path(sys.executable)
 
 
-def _default_bufferx_python() -> Path:
-    candidates: list[Path] = []
-
-    conda_prefix = os.environ.get(
-        "CONDA_PREFIX"
-    )
-
-    if conda_prefix:
-        candidates.append(
-            Path(conda_prefix)
-            .expanduser()
-            .resolve()
-            .parent
-            / "bufferx"
-            / "bin"
-            / "python"
-        )
-
-    candidates.extend(
-        (
-            (
-                Path.home()
-                / "miniforge3"
-                / "envs"
-                / "bufferx"
-                / "bin"
-                / "python"
-            ),
-            (
-                Path.home()
-                / "miniconda3"
-                / "envs"
-                / "bufferx"
-                / "bin"
-                / "python"
-            ),
-        )
-    )
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-
-    return (
-        Path.home()
-        / "miniforge3"
-        / "envs"
-        / "bufferx"
-        / "bin"
-        / "python"
-    )
-
-
 @dataclass(frozen=True)
 class FrameSpec:
     scene_id: int
@@ -295,12 +241,6 @@ class PipelineConfig:
     foundationpose_debug: int
     renderer_batch_size: int
     renderer_maximum_texture_size: int
-    bufferx_enabled: bool
-    bufferx_repository: Path
-    bufferx_python: Path
-    bufferx_pose_estimator: str
-    bufferx_sample_count: int
-    bufferx_icp_refine: bool
     dino_enabled: bool
     dinov3_repository: Path
     dinov3_checkpoint: Path
@@ -333,6 +273,9 @@ class PipelineConfig:
     visible_scale_refinement_reference_enabled: bool
     visible_scale_refinement_query_enabled: bool
     visible_scale_minimum_loss_improvement_ratio: float
+    pose_trust_region_max_rotation_delta_deg: float
+    pose_trust_region_max_translation_ratio: float
+    pose_trust_region_max_iou_drop: float
     alignment_weight_mask: float
     alignment_weight_depth: float
     alignment_weight_free_space: float
@@ -971,11 +914,6 @@ def build_config(
         if args.instantmesh_python is not None
         else _default_instantmesh_python()
     )
-    bufferx_python = (
-        args.bufferx_python
-        if args.bufferx_python is not None
-        else _default_bufferx_python()
-    )
     sam3_device = (
         args.sam3_device.strip()
         if args.sam3_device is not None
@@ -1073,26 +1011,6 @@ def build_config(
         renderer_maximum_texture_size=(
             args.renderer_maximum_texture_size
         ),
-        bufferx_enabled=args.bufferx_enabled,
-        bufferx_repository=(
-            args.bufferx_repository
-            .expanduser()
-            .resolve()
-        ),
-        bufferx_python=(
-            bufferx_python
-            .expanduser()
-            .resolve()
-        ),
-        bufferx_pose_estimator=(
-            args.bufferx_pose_estimator
-        ),
-        bufferx_sample_count=(
-            args.bufferx_sample_count
-        ),
-        bufferx_icp_refine=(
-            args.bufferx_icp_refine
-        ),
         dino_enabled=args.dino_enabled,
         dinov3_repository=dinov3_repository,
         dinov3_checkpoint=(
@@ -1183,6 +1101,17 @@ def build_config(
         visible_scale_minimum_loss_improvement_ratio=(
             args
             .visible_scale_minimum_loss_improvement_ratio
+        ),
+        pose_trust_region_max_rotation_delta_deg=(
+            args
+            .pose_trust_region_max_rotation_delta_deg
+        ),
+        pose_trust_region_max_translation_ratio=(
+            args
+            .pose_trust_region_max_translation_ratio
+        ),
+        pose_trust_region_max_iou_drop=(
+            args.pose_trust_region_max_iou_drop
         ),
         alignment_weight_mask=(
             args.alignment_weight_mask
@@ -1305,19 +1234,6 @@ def _query_frames(
     )
 
 
-def _pose_path_uses_bufferx(
-    config: PipelineConfig,
-) -> bool:
-    return (
-        config.bufferx_enabled
-        and config.pose_path
-        in {
-            "combined",
-            "cross_mesh",
-        }
-    )
-
-
 def _pose_path_uses_dino(
     config: PipelineConfig,
 ) -> bool:
@@ -1335,15 +1251,6 @@ def validate_config(
         raise ValueError(
             "Unsupported pose_path: "
             f"{config.pose_path}"
-        )
-
-    if (
-        config.pose_path == "cross_mesh"
-        and not config.bufferx_enabled
-    ):
-        raise ValueError(
-            "cross_mesh requires "
-            "bufferx.enabled=true."
         )
 
     _require_file(
@@ -1403,59 +1310,6 @@ def validate_config(
         ),
         "FoundationPose estimater.py",
     )
-
-    if _pose_path_uses_bufferx(config):
-        _require_directory(
-            config.bufferx_repository,
-            "BUFFER-X repository",
-        )
-        _require_file(
-            (
-                config.bufferx_repository
-                / "models"
-                / "BUFFERX.py"
-            ),
-            "BUFFER-X model implementation",
-        )
-        _require_file(
-            (
-                config.bufferx_repository
-                / "snapshot"
-                / "threedmatch"
-                / "Desc"
-                / "best.pth"
-            ),
-            "BUFFER-X descriptor checkpoint",
-        )
-        _require_file(
-            (
-                config.bufferx_repository
-                / "snapshot"
-                / "threedmatch"
-                / "Pose"
-                / "best.pth"
-            ),
-            "BUFFER-X pose checkpoint",
-        )
-        _require_file(
-            config.bufferx_python,
-            "BUFFER-X Python",
-        )
-
-        if (
-            config.bufferx_pose_estimator
-            not in {"ransac", "kiss_matcher"}
-        ):
-            raise ValueError(
-                "bufferx_pose_estimator must be "
-                "'ransac' or 'kiss_matcher'."
-            )
-
-        if config.bufferx_sample_count < 2000:
-            raise ValueError(
-                "bufferx_sample_count must be at least "
-                "2000."
-            )
 
     if _pose_path_uses_dino(config):
         if config.dinov3_checkpoint.is_dir():
@@ -2052,27 +1906,6 @@ def _save_run_config(
                 ),
             },
         },
-        "bufferx": {
-            "enabled": config.bufferx_enabled,
-            "repository": str(
-                config.bufferx_repository
-            ),
-            "python": str(
-                config.bufferx_python
-            ),
-            "pose_estimator": (
-                config.bufferx_pose_estimator
-            ),
-            "sample_count": (
-                config.bufferx_sample_count
-            ),
-            "icp_refine": (
-                config.bufferx_icp_refine
-            ),
-            "result_scope": (
-                "independent_mesh_to_mesh_comparison"
-            ),
-        },
         "scale": {
             "normalization": {
                 "quantile_low": (
@@ -2349,27 +2182,6 @@ def _print_runtime_config(
         "  foundationpose_workers: "
         f"{config.foundationpose_workers}"
     )
-    effective_bufferx = (
-        _pose_path_uses_bufferx(config)
-    )
-    print(
-        "  bufferx_enabled: "
-        f"{config.bufferx_enabled} "
-        f"(effective={effective_bufferx})"
-    )
-    if effective_bufferx:
-        print(
-            "  bufferx_repository: "
-            f"{config.bufferx_repository}"
-        )
-        print(
-            "  bufferx_python: "
-            f"{config.bufferx_python}"
-        )
-        print(
-            "  bufferx_pose_estimator: "
-            f"{config.bufferx_pose_estimator}"
-        )
     effective_dino = _pose_path_uses_dino(
         config
     )
@@ -2807,6 +2619,13 @@ def _self_align_generated_states(
             "At least one generated proxy state is required."
         )
 
+    print(
+        "==== [STAGE] Coarse self-pose search: "
+        f"{sum(len(s.candidates) for s in normalized_states)} "
+        "candidate(s) total, running FoundationPose register() "
+        "per candidate ===="
+    )
+
     jobs = tuple(
         FoundationPoseProcessJob(
             job_name=(
@@ -3116,6 +2935,12 @@ def _refine_aligned_states_joint_shared_scale(
             "joint_shared scale은 정확히 Reference와 Query "
             f"두 state를 요구합니다: count={len(states)}"
         )
+
+    print(
+        "==== [STAGE] Joint-shared S* candidate search: "
+        "coarse self-pose 결과를 기반으로 reference/query가 공유할 "
+        "metric scale 후보를 만들고 재평가합니다 ===="
+    )
 
     state_by_name: dict[str, AlignedProxyState] = {}
     state_index_by_name: dict[str, int] = {}
@@ -4204,131 +4029,6 @@ def _save_visualization_report_best_effort(
         return None, error_message
 
 
-def _run_bufferx_best_effort(
-    *,
-    config: PipelineConfig,
-    reference_state: AlignedProxyState,
-    query_state: AlignedProxyState,
-    output_root: Path,
-) -> Any | None:
-    if not _pose_path_uses_bufferx(config):
-        return None
-
-    from pose.bufferx_runner import (
-        run_bufferx_registration,
-    )
-
-    bufferx_output = (
-        output_root
-        / "mesh_registration"
-        / "bufferx"
-    )
-
-    print(
-        "[Mesh registration] BUFFER-X on selected "
-        "self-aligned proxies"
-    )
-
-    try:
-        result = run_bufferx_registration(
-            repository_path=(
-                config.bufferx_repository
-            ),
-            python_executable=(
-                config.bufferx_python
-            ),
-            reference_self_alignment=(
-                reference_state.self_alignment
-            ),
-            query_self_alignment=(
-                query_state.self_alignment
-            ),
-            output_directory=bufferx_output,
-            pose_estimator=(
-                config.bufferx_pose_estimator
-            ),
-            sample_count=(
-                config.bufferx_sample_count
-            ),
-            icp_refine=(
-                config.bufferx_icp_refine
-            ),
-            random_seed=config.random_seed,
-        )
-
-    except Exception as error:
-        bufferx_is_required = (
-            config.pose_path
-            in {"self_mesh", "cross_mesh"}
-        )
-        bufferx_output.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-        failure_path = (
-            bufferx_output
-            / "bufferx_failure.json"
-        )
-        failure_payload = {
-            "status": "failed",
-            "error_type": type(error).__name__,
-            "error": str(error),
-            "traceback": traceback.format_exc(),
-            "selection_effect": (
-                (
-                    "required pose path failed"
-                    if bufferx_is_required
-                    else (
-                        "none; existing Cross "
-                        "pipeline continued"
-                    )
-                )
-            ),
-        }
-
-        with failure_path.open(
-            mode="w",
-            encoding="utf-8",
-        ) as file:
-            json.dump(
-                failure_payload,
-                file,
-                indent=2,
-                ensure_ascii=False,
-            )
-
-        print(
-            "[BUFFER-X warning] Independent mesh "
-            "registration failed"
-            + (
-                "; selected pose path cannot continue: "
-                if bufferx_is_required
-                else "; Cross will continue: "
-            )
-            + f"{type(error).__name__}: {error}",
-            file=sys.stderr,
-        )
-        print(
-            f"[BUFFER-X failure] {failure_path}",
-            file=sys.stderr,
-        )
-
-        if bufferx_is_required:
-            raise RuntimeError(
-                f"{config.pose_path} requires "
-                "BUFFER-X, but registration failed."
-            ) from error
-
-        return None
-
-    print(
-        "[BUFFER-X relative pose] "
-        f"{result.relative_pose_path}"
-    )
-    print(
-        result.relative_pose_query_from_reference
-    )
-    return result
 def _save_published_result(
     *,
     config: PipelineConfig,
@@ -4634,11 +4334,6 @@ def _save_published_result(
                     "foundationpose_time_sec"
                 )
             ),
-            bufferx_time_sec=number(
-                timings.get(
-                    "bufferx_registration_time_sec"
-                )
-            ),
         ),
         extra={
             "final_loss": (
@@ -4745,7 +4440,11 @@ def _run_aligned_pair(
     from evaluation.research_result_logger import (
         save_pair_research_results,
     )
+    from pose.alignment_evaluator import (
+        select_self_alignment_hypotheses,
+    )
     from pose.bidirectional_consistency import (
+        DEFAULT_MAXIMUM_SERIALIZED_PAIRS,
         ConsistencyThresholds,
         ConsistencyWeights,
         evaluate_bidirectional_consistency,
@@ -4762,6 +4461,7 @@ def _run_aligned_pair(
         finalize_cross_alignment,
     )
     from pose.final_candidate_selector import (
+        DEFAULT_MAXIMUM_SERIALIZED_PAIR_SCORES,
         CandidateScoreWeights,
         PairScoreWeights,
         save_final_selection,
@@ -4787,16 +4487,37 @@ def _run_aligned_pair(
             aligned_pair_started_at
         )
 
+    for _diag_state in (reference_state, query_state):
+        _diag_alignment = _diag_state.self_alignment
+        try:
+            import numpy as np
+            import open3d as _diag_o3d
+            from pose.dgedi_runner import (
+                _diameter as _diag_diameter,
+            )
+
+            _diag_mesh = _diag_o3d.io.read_triangle_mesh(
+                str(_diag_alignment.scaled_mesh_path)
+            )
+            _diag_diam = _diag_diameter(
+                np.asarray(_diag_mesh.vertices)
+            )
+        except Exception as _diag_error:
+            _diag_diam = f"<error: {_diag_error}>"
+
+        print(
+            "[_run_aligned_pair received self_alignment] "
+            f"view={_diag_alignment.proxy_view} "
+            f"candidate_index={_diag_alignment.candidate_index} "
+            f"scale_m={_diag_alignment.scale_m} "
+            f"scaled_mesh_path={_diag_alignment.scaled_mesh_path} "
+            f"actual_mesh_diameter_m={_diag_diam}"
+        )
+
     reference_view = (
         reference_state.generated.prepared_view
     )
     query_view = query_state.generated.prepared_view
-
-    bufferx_result = None
-
-    timing_values[
-        "bufferx_registration_time_sec"
-    ] = 0.0
 
     timing_values[
         "dgedi_registration_time_sec"
@@ -4810,6 +4531,12 @@ def _run_aligned_pair(
             save_independent_pose_path,
         )
 
+        observation_refinement_sources: dict[str, Any] = {
+            "enabled": False,
+            "reference_accepted": False,
+            "query_accepted": False,
+        }
+
         if (
             os.environ.get(
                 "COPOSE_OBSERVATION_REFINEMENT_ENABLED",
@@ -4817,6 +4544,13 @@ def _run_aligned_pair(
             ).strip()
             == "1"
         ):
+            print(
+                "==== [STAGE] Shape refinement "
+                "(observation refinement: ARAP/legacy + "
+                "2nd FoundationPose pose refinement) "
+                "-- reference, then query ===="
+            )
+
             from mesh_refinement.observation_refinement import (
                 refine_self_alignment_with_observation,
             )
@@ -4850,6 +4584,18 @@ def _run_aligned_pair(
                             / "observation_refinement"
                             / "reference"
                         ),
+                        pose_trust_region_max_rotation_delta_deg=(
+                            config
+                            .pose_trust_region_max_rotation_delta_deg
+                        ),
+                        pose_trust_region_max_translation_ratio=(
+                            config
+                            .pose_trust_region_max_translation_ratio
+                        ),
+                        pose_trust_region_max_iou_drop=(
+                            config
+                            .pose_trust_region_max_iou_drop
+                        ),
                     )
                 )
 
@@ -4864,6 +4610,18 @@ def _run_aligned_pair(
                             output_root
                             / "observation_refinement"
                             / "query"
+                        ),
+                        pose_trust_region_max_rotation_delta_deg=(
+                            config
+                            .pose_trust_region_max_rotation_delta_deg
+                        ),
+                        pose_trust_region_max_translation_ratio=(
+                            config
+                            .pose_trust_region_max_translation_ratio
+                        ),
+                        pose_trust_region_max_iou_drop=(
+                            config
+                            .pose_trust_region_max_iou_drop
                         ),
                     )
                 )
@@ -4899,6 +4657,30 @@ def _run_aligned_pair(
                     query_refinement.self_alignment
                 ),
             )
+
+            observation_refinement_sources = {
+                "enabled": True,
+                "reference_accepted": bool(
+                    reference_refinement.accepted
+                ),
+                "reference_reasons": list(
+                    reference_refinement.reasons
+                ),
+                "reference_mesh_passed_to_dgedi": str(
+                    reference_state.self_alignment.scaled_mesh_path
+                ),
+                "query_accepted": bool(query_refinement.accepted),
+                "query_reasons": list(query_refinement.reasons),
+                "query_mesh_passed_to_dgedi": str(
+                    query_state.self_alignment.scaled_mesh_path
+                ),
+            }
+
+        print(
+            "==== [STAGE] Cross-view registration: "
+            "dGeDi (reference self-aligned mesh <-> "
+            "query self-aligned mesh) ===="
+        )
 
         dgedi_repository = Path(
             os.environ.get(
@@ -4990,7 +4772,89 @@ def _run_aligned_pair(
             - dgedi_started_at
         )
 
+        from pose.dgedi_observation_validator import (
+            validate_dgedi_against_observations,
+        )
+        import numpy as np
+
+        dgedi_validation = validate_dgedi_against_observations(
+            reference_mesh_path=(
+                dgedi_result.reference_self_aligned_mesh_path
+            ),
+            query_mesh_path=(
+                dgedi_result.query_self_aligned_mesh_path
+            ),
+            relative_pose_query_from_reference=(
+                dgedi_result.relative_pose_query_from_reference
+            ),
+            reference_camera_k=np.asarray(
+                reference_view.view.camera_matrix,
+                dtype=np.float64,
+            ),
+            query_camera_k=np.asarray(
+                query_view.view.camera_matrix,
+                dtype=np.float64,
+            ),
+            reference_mask_bool=np.asarray(
+                reference_view.segmentation.mask_bool,
+                dtype=bool,
+            ),
+            query_mask_bool=np.asarray(
+                query_view.segmentation.mask_bool,
+                dtype=bool,
+            ),
+            reference_depth_m=np.asarray(
+                reference_view.view.depth_m,
+                dtype=np.float32,
+            ),
+            query_depth_m=np.asarray(
+                query_view.view.depth_m,
+                dtype=np.float32,
+            ),
+            output_directory=(
+                output_root
+                / "method_results"
+                / "self_mesh"
+                / "observation_validation"
+            ),
+            weights=AlignmentScoreWeights(
+                mask=config.alignment_weight_mask,
+                depth=config.alignment_weight_depth,
+                free_space=config.alignment_weight_free_space,
+                boundary=config.alignment_weight_boundary,
+            ),
+            depth_trim_quantile=config.alignment_depth_trim_quantile,
+            minimum_depth_overlap_pixels=(
+                config.alignment_minimum_depth_overlap_pixels
+            ),
+            free_space_absolute_tolerance_m=(
+                config.alignment_free_space_absolute_tolerance_m
+            ),
+            free_space_relative_tolerance=(
+                config.alignment_free_space_relative_tolerance
+            ),
+        )
+
+        print(
+            "[dGeDi observation validation] "
+            f"accepted={dgedi_validation.accepted} "
+            f"reasons={list(dgedi_validation.reasons)} "
+            f"summary={dgedi_validation.summary_path}"
+        )
+
+        if not dgedi_validation.accepted:
+            print("[Final status] REJECT")
+            print(f"[Final summary] {dgedi_validation.summary_path}")
+            return PairPipelineOutcome(
+                final_status="REJECT",
+                summary_path=dgedi_validation.summary_path,
+                pose_path=None,
+                visualization_path=None,
+            )
+
         try:
+            import numpy as np
+
             from evaluation.mesh_on_photo_visualizer import (
                 render_mesh_on_photo,
             )
@@ -5113,6 +4977,21 @@ composition=(
                             "dgedi_registration_time_sec"
                         ]
                     ),
+                    "observation_refinement": (
+                        observation_refinement_sources
+                    ),
+                    "dgedi_observation_validation": {
+                        "accepted": dgedi_validation.accepted,
+                        "summary_path": str(
+                            dgedi_validation.summary_path
+                        ),
+                        "reference_render_path": str(
+                            dgedi_validation.reference_render_path
+                        ),
+                        "query_render_path": str(
+                            dgedi_validation.query_render_path
+                        ),
+                    },
                 },
             )
         )
@@ -5159,30 +5038,6 @@ composition=(
             ),
             visualization_path=None,
         )
-
-    bufferx_started_at = (
-        time.perf_counter()
-    )
-
-    bufferx_result = (
-        _run_bufferx_best_effort(
-            config=config,
-            reference_state=reference_state,
-            query_state=query_state,
-            output_root=output_root,
-        )
-    )
-
-    timing_values[
-        "bufferx_registration_time_sec"
-    ] = (
-        time.perf_counter()
-        - bufferx_started_at
-        if _pose_path_uses_bufferx(
-            config
-        )
-        else 0.0
-    )
 
     print(
         "[5/8] Selected proxies -> opposite RGB-D "
@@ -5283,245 +5138,6 @@ composition=(
         - cross_alignment_started_at
     )
 
-    if config.pose_path == "cross_mesh":
-        if bufferx_result is None:
-            raise RuntimeError(
-                "cross_mesh requires a successful "
-                "BUFFER-X registration."
-            )
-
-        from pose.alignment_evaluator import (
-            evaluate_foundationpose_alignments,
-        )
-        from pose.independent_pose_paths import (
-            compose_cross_mesh_relative_pose,
-            save_independent_pose_path,
-        )
-
-        cross_mesh_evaluation_root = (
-            output_root
-            / "method_results"
-            / "cross_mesh"
-            / "cross_alignment_evaluation"
-        )
-        alignment_weights = AlignmentScoreWeights(
-            mask=config.alignment_weight_mask,
-            depth=config.alignment_weight_depth,
-            free_space=(
-                config.alignment_weight_free_space
-            ),
-            boundary=(
-                config.alignment_weight_boundary
-            ),
-        )
-
-        with FoundationPoseMeshRenderer(
-            foundationpose_repository_path=(
-                config.foundationpose_repository
-            ),
-            device=config.device,
-            render_batch_size=(
-                config.renderer_batch_size
-            ),
-            maximum_texture_size=(
-                config
-                .renderer_maximum_texture_size
-            ),
-        ) as renderer:
-            reference_cross_evaluation = (
-                evaluate_foundationpose_alignments(
-                    prepared_view=query_view,
-                    candidate_results=(
-                        cross_alignment
-                        .reference_proxy_to_query
-                        .foundationpose_result,
-                    ),
-                    renderer=renderer,
-                    output_directory=(
-                        cross_mesh_evaluation_root
-                        / "reference_proxy_to_query"
-                    ),
-                    weights=alignment_weights,
-                    depth_trim_quantile=(
-                        config
-                        .alignment_depth_trim_quantile
-                    ),
-                    min_depth_overlap_pixels=(
-                        config
-                        .alignment_minimum_depth_overlap_pixels
-                    ),
-                    free_space_absolute_tolerance_m=(
-                        config
-                        .alignment_free_space_absolute_tolerance_m
-                    ),
-                    free_space_relative_tolerance=(
-                        config
-                        .alignment_free_space_relative_tolerance
-                    ),
-                )
-            )
-            query_cross_evaluation = (
-                evaluate_foundationpose_alignments(
-                    prepared_view=reference_view,
-                    candidate_results=(
-                        cross_alignment
-                        .query_proxy_to_reference
-                        .foundationpose_result,
-                    ),
-                    renderer=renderer,
-                    output_directory=(
-                        cross_mesh_evaluation_root
-                        / "query_proxy_to_reference"
-                    ),
-                    weights=alignment_weights,
-                    depth_trim_quantile=(
-                        config
-                        .alignment_depth_trim_quantile
-                    ),
-                    min_depth_overlap_pixels=(
-                        config
-                        .alignment_minimum_depth_overlap_pixels
-                    ),
-                    free_space_absolute_tolerance_m=(
-                        config
-                        .alignment_free_space_absolute_tolerance_m
-                    ),
-                    free_space_relative_tolerance=(
-                        config
-                        .alignment_free_space_relative_tolerance
-                    ),
-                )
-            )
-
-        reference_best = (
-            reference_cross_evaluation.best
-        )
-        query_best = query_cross_evaluation.best
-        relative_pose = (
-            compose_cross_mesh_relative_pose(
-                reference_proxy_to_query_camera=(
-                    reference_best
-                    .hypothesis
-                    .pose_cam_from_proxy
-                ),
-                query_proxy_to_reference_camera=(
-                    query_best
-                    .hypothesis
-                    .pose_cam_from_proxy
-                ),
-                proxy_pose_query_from_reference=(
-                    bufferx_result
-                    .proxy_pose_query_from_reference
-                ),
-            )
-        )
-        independent_result = (
-            save_independent_pose_path(
-                method="cross_mesh",
-                relative_pose_query_from_reference=(
-                    relative_pose
-                ),
-                output_directory=(
-                    output_root
-                    / "method_results"
-                    / "cross_mesh"
-                ),
-                composition=(
-                    "T_Cq_from_Pr @ inv(T_Pq_from_Pr) "
-                    "@ inv(T_Cr_from_Pq)"
-                ),
-                sources={
-                    "reference_proxy_to_query": {
-                        "candidate_index": (
-                            reference_best
-                            .candidate_result
-                            .candidate_index
-                        ),
-                        "hypothesis_rank": (
-                            reference_best
-                            .hypothesis
-                            .rank
-                        ),
-                        "foundationpose_score": (
-                            reference_best
-                            .hypothesis
-                            .score
-                        ),
-                        "alignment_loss": (
-                            reference_best
-                            .alignment_score
-                            .total_loss
-                        ),
-                        "pose": (
-                            reference_best
-                            .hypothesis
-                            .pose_cam_from_proxy
-                            .tolist()
-                        ),
-                    },
-                    "query_proxy_to_reference": {
-                        "candidate_index": (
-                            query_best
-                            .candidate_result
-                            .candidate_index
-                        ),
-                        "hypothesis_rank": (
-                            query_best
-                            .hypothesis
-                            .rank
-                        ),
-                        "foundationpose_score": (
-                            query_best
-                            .hypothesis
-                            .score
-                        ),
-                        "alignment_loss": (
-                            query_best
-                            .alignment_score
-                            .total_loss
-                        ),
-                        "pose": (
-                            query_best
-                            .hypothesis
-                            .pose_cam_from_proxy
-                            .tolist()
-                        ),
-                    },
-                    "bufferx_proxy_pose_path": str(
-                        bufferx_result
-                        .proxy_pose_path
-                    ),
-                    "bufferx_metadata_path": str(
-                        bufferx_result
-                        .metadata_path
-                    ),
-                },
-            )
-        )
-        print(
-            "[Independent pose path] cross_mesh"
-        )
-        print(
-            f"[Final summary] "
-            f"{independent_result.summary_path}"
-        )
-        print(
-            f"[Final pose] "
-            f"{independent_result.pose_path}"
-        )
-        print(
-            independent_result
-            .relative_pose_query_from_reference
-        )
-        return PairPipelineOutcome(
-            final_status="COMPLETED",
-            summary_path=(
-                independent_result.summary_path
-            ),
-            pose_path=independent_result.pose_path,
-            visualization_path=None,
-        )
-
     print(
         "[6/8] Build H_query_from_reference candidates"
     )
@@ -5529,6 +5145,37 @@ composition=(
     relative_pose_started_at = (
         time.perf_counter()
     )
+
+    reference_self_hypotheses = (
+        select_self_alignment_hypotheses(
+            reference_state.self_evaluation,
+            candidate_index=(
+                reference_state
+                .self_alignment
+                .candidate_index
+            ),
+            maximum_count=config.top_k,
+        )
+    )
+    query_self_hypotheses = (
+        select_self_alignment_hypotheses(
+            query_state.self_evaluation,
+            candidate_index=(
+                query_state
+                .self_alignment
+                .candidate_index
+            ),
+            maximum_count=config.top_k,
+        )
+    )
+
+    print(
+        "[Joint self/cross hypotheses] "
+        f"reference_self={len(reference_self_hypotheses)}, "
+        f"query_self={len(query_self_hypotheses)}, "
+        f"cross_per_path={config.top_k}"
+    )
+
     relative_candidates = (
         build_bidirectional_relative_candidates(
             reference_self=(
@@ -5544,6 +5191,12 @@ composition=(
                 cross_alignment
                 .query_proxy_to_reference
                 .foundationpose_result
+            ),
+            reference_self_hypotheses=(
+                reference_self_hypotheses
+            ),
+            query_self_hypotheses=(
+                query_self_hypotheses
             ),
         )
     )
@@ -5607,6 +5260,9 @@ composition=(
         result=consistency_result,
         output_directory=(
             output_root / "consistency"
+        ),
+        maximum_serialized_pairs=(
+            DEFAULT_MAXIMUM_SERIALIZED_PAIRS
         ),
     )
     timing_values["consistency_time_sec"] = (
@@ -5748,6 +5404,9 @@ composition=(
             result=final_result,
             output_directory=(
                 output_root / "final"
+            ),
+            maximum_serialized_pair_scores=(
+                DEFAULT_MAXIMUM_SERIALIZED_PAIR_SCORES
             ),
         )
     )

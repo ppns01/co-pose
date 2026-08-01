@@ -19,6 +19,8 @@ class DGeDiRegistrationResult:
     proxy_pose_path: Path
     relative_pose_path: Path
     metadata_path: Path
+    reference_self_aligned_mesh_path: Path
+    query_self_aligned_mesh_path: Path
 
 
 def _rigid(value: Any, name: str) -> np.ndarray:
@@ -1092,6 +1094,12 @@ def run_dgedi_registration(
             relative_pose_path
         ),
         metadata_path=metadata_path,
+        reference_self_aligned_mesh_path=(
+            reference_mesh
+        ),
+        query_self_aligned_mesh_path=(
+            query_mesh
+        ),
     )
 
 

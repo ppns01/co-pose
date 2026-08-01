@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 from dataclasses import dataclass, replace
@@ -8,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import open3d as o3d
+import scipy.ndimage
 
 from core.types import PreparedView
 from mesh_refinement.silhouette_mesh_refiner import (
@@ -15,6 +17,12 @@ from mesh_refinement.silhouette_mesh_refiner import (
 )
 from mesh_refinement.dense_strip_arap_refiner import (
     refine_mesh_with_dense_strip_arap,
+)
+from mesh_refinement.iterative_contour_arap_refiner import (
+    refine_mesh_with_iterative_contour_arap,
+)
+from mesh_refinement.weighted_visible_arap_refiner import (
+    refine_mesh_with_weighted_visible_arap,
 )
 from mesh_refinement.stage_observation_visualizer import visualize_refinement_stages
 from pose.dgedi_runner import _diameter
@@ -29,11 +37,107 @@ class ObservationRefinementResult:
     diagnostics: dict
 
 
+def _diagnostic_to_jsonable(
+    value: Any,
+) -> Any:
+    """numpy/Path가 포함된 diagnostics를 JSON-safe 값으로 변환한다."""
+
+    if isinstance(value, dict):
+        return {
+            str(key): _diagnostic_to_jsonable(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, (list, tuple)):
+        return [
+            _diagnostic_to_jsonable(item)
+            for item in value
+        ]
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if value is None or isinstance(
+        value,
+        (str, int, float, bool),
+    ):
+        return value
+
+    return repr(value)
+
+
+def _write_observation_refinement_diagnostics(
+    *,
+    output_directory: Path,
+    filename: str,
+    diagnostics: dict,
+    accepted: bool | None = None,
+    reasons: tuple[str, ...] = (),
+) -> Path:
+    """Observation refinement diagnostics를 원자적으로 저장한다."""
+
+    output_directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path = (
+        output_directory / filename
+    )
+
+    temporary_path = output_path.with_suffix(
+        output_path.suffix + ".tmp"
+    )
+
+    payload = _diagnostic_to_jsonable(
+        diagnostics
+    )
+
+    if not isinstance(payload, dict):
+        payload = {
+            "diagnostics": payload,
+        }
+
+    payload["_result"] = {
+        "accepted": accepted,
+        "reasons": list(reasons),
+    }
+
+    temporary_path.write_text(
+        json.dumps(
+            payload,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
+
+    temporary_path.replace(
+        output_path
+    )
+
+    print(
+        "[Observation refinement diagnostics] "
+        f"{output_path}"
+    )
+
+    return output_path
+
+
+
 def _write_camera_stage_mesh(
     *,
     path: Path,
     points_camera: np.ndarray,
     triangles: np.ndarray,
+    vertex_colors: np.ndarray | None = None,
 ) -> None:
     mesh = o3d.geometry.TriangleMesh()
 
@@ -54,6 +158,30 @@ def _write_camera_stage_mesh(
             )
         )
     )
+
+    if vertex_colors is not None:
+        colors = np.asarray(
+            vertex_colors,
+            dtype=np.float64,
+        )
+
+        expected_shape = (
+            len(points_camera),
+            3,
+        )
+
+        if colors.shape != expected_shape:
+            raise ValueError(
+                "Stage vertex color shape mismatch: "
+                f"colors={colors.shape}, "
+                f"expected={expected_shape}"
+            )
+
+        mesh.vertex_colors = (
+            o3d.utility.Vector3dVector(
+                colors.copy()
+            )
+        )
 
     mesh.compute_triangle_normals()
     mesh.compute_vertex_normals()
@@ -78,47 +206,118 @@ def _write_camera_stage_mesh(
         )
 
 
+def _rotation_delta_deg(
+    rotation_t0: np.ndarray,
+    rotation_t1: np.ndarray,
+) -> float:
+    """
+    동일한 external refined-proxy frame에 대한
+    T0와 T1 사이의 누적 geodesic rotation 차이를 계산한다.
+    """
+    rotation_t0 = np.asarray(
+        rotation_t0,
+        dtype=np.float64,
+    )
+
+    rotation_t1 = np.asarray(
+        rotation_t1,
+        dtype=np.float64,
+    )
+
+    if (
+        rotation_t0.shape != (3, 3)
+        or rotation_t1.shape != (3, 3)
+    ):
+        raise ValueError(
+            "rotation_t0 and rotation_t1 "
+            "must both have shape (3, 3)"
+        )
+
+    relative_rotation = (
+        rotation_t1
+        @ rotation_t0.T
+    )
+
+    cosine = np.clip(
+        (
+            np.trace(
+                relative_rotation
+            )
+            - 1.0
+        )
+        / 2.0,
+        -1.0,
+        1.0,
+    )
+
+    return float(
+        np.degrees(
+            np.arccos(cosine)
+        )
+    )
+
+
 def _silhouette_quality(
     *,
     points_camera: np.ndarray,
+    triangles: np.ndarray,
     mask_bool: np.ndarray,
     camera_k: np.ndarray,
 ) -> tuple[float, float]:
-    """camera-frame mesh 정점 투영이 실제 mask와 얼마나 잘 맞는지
-    (IoU, 평균 boundary distance)를 계산한다. Pose 재추정(track_one)
-    결과를 실제 관측과 비교 검증하는 데 쓴다."""
-    from mesh_refinement.depth_anchored_visible_refiner import (
-        _visible_vertex_mask,
-    )
-    from mesh_refinement.silhouette_mesh_refiner import (
-        _signed_distance_to_mask,
+    """Triangle raster 기준 mask IoU와 contour distance를 계산한다."""
+    from mesh_refinement.iterative_contour_arap_refiner import (
+        _raycast_mesh,
     )
 
     image_height, image_width = mask_bool.shape
-    visible_mask, u_pixel, v_pixel = _visible_vertex_mask(
+    raycast = _raycast_mesh(
         points_camera=points_camera,
+        triangles=triangles,
         camera_k=camera_k,
         image_height=image_height,
         image_width=image_width,
-        mask_bool=np.ones_like(mask_bool),
     )
-
-    if not visible_mask.any():
+    rendered_mask = np.asarray(
+        raycast["rendered_mask"],
+        dtype=bool,
+    )
+    if not rendered_mask.any():
         return 0.0, float("inf")
 
-    silhouette = np.zeros((image_height, image_width), dtype=bool)
-    silhouette[v_pixel[visible_mask], u_pixel[visible_mask]] = True
-
-    intersection = np.count_nonzero(silhouette & mask_bool)
-    union = np.count_nonzero(silhouette | mask_bool)
+    intersection = np.count_nonzero(rendered_mask & mask_bool)
+    union = np.count_nonzero(rendered_mask | mask_bool)
     iou = intersection / union if union else 0.0
 
-    sdf = _signed_distance_to_mask(mask_bool)
-    boundary_distance = float(
-        np.abs(sdf[v_pixel[visible_mask], u_pixel[visible_mask]]).mean()
+    rendered_boundary = (
+        rendered_mask
+        & ~scipy.ndimage.binary_erosion(
+            rendered_mask,
+            iterations=1,
+            border_value=0,
+        )
+    )
+    observed_boundary = (
+        mask_bool
+        & ~scipy.ndimage.binary_erosion(
+            mask_bool,
+            iterations=1,
+            border_value=0,
+        )
+    )
+    if not rendered_boundary.any() or not observed_boundary.any():
+        return float(iou), float("inf")
+    distance_to_observed = scipy.ndimage.distance_transform_edt(
+        ~observed_boundary
+    )
+    distance_to_rendered = scipy.ndimage.distance_transform_edt(
+        ~rendered_boundary
+    )
+    boundary_distance = 0.5 * (
+        float(distance_to_observed[rendered_boundary].mean())
+        + float(distance_to_rendered[observed_boundary].mean())
     )
 
-    return iou, boundary_distance
+    return float(iou), float(boundary_distance)
 
 
 def _acceptance_gate(diagnostics: dict) -> tuple[bool, tuple[str, ...]]:
@@ -129,11 +328,22 @@ def _acceptance_gate(diagnostics: dict) -> tuple[bool, tuple[str, ...]]:
     """
     reasons: list[str] = []
 
-    if diagnostics["iou_after"] < diagnostics["iou_before"]:
+    iou_before = float(
+        diagnostics.get(
+            "raster_iou_before",
+            diagnostics["iou_before"],
+        )
+    )
+    iou_after = float(
+        diagnostics.get(
+            "raster_iou_after",
+            diagnostics["iou_after"],
+        )
+    )
+    if iou_after < iou_before - 1e-6:
         reasons.append(
             "IoU did not improve "
-            f"({diagnostics['iou_before']:.3f} -> "
-            f"{diagnostics['iou_after']:.3f})"
+            f"({iou_before:.3f} -> {iou_after:.3f})"
         )
 
     boundary_before = diagnostics["boundary_distance_before_px"]
@@ -148,6 +358,18 @@ def _acceptance_gate(diagnostics: dict) -> tuple[bool, tuple[str, ...]]:
             f"({boundary_before:.2f} -> {boundary_after:.2f} px)"
         )
 
+    iou_improved = iou_after > iou_before + 1e-4
+    boundary_improved = (
+        boundary_before is not None
+        and boundary_after is not None
+        and boundary_after < boundary_before - 0.1
+    )
+    if not iou_improved and not boundary_improved:
+        reasons.append(
+            "observation fit did not measurably improve "
+            f"(IoU {iou_before:.3f} -> {iou_after:.3f})"
+        )
+
     target_scale_m = diagnostics["target_scale_m"]
     if target_scale_m:
         scale_drift = abs(
@@ -157,6 +379,27 @@ def _acceptance_gate(diagnostics: dict) -> tuple[bool, tuple[str, ...]]:
             reasons.append(
                 f"S* drift too large ({scale_drift * 100:.2f}%)"
             )
+
+    scale_correction_ratio = diagnostics.get(
+        "scale_correction_ratio"
+    )
+    if (
+        scale_correction_ratio is not None
+        and abs(float(scale_correction_ratio) - 1.0) > 0.005
+    ):
+        reasons.append(
+            "required S* correction too large "
+            f"({(float(scale_correction_ratio) - 1.0) * 100:.2f}%)"
+        )
+
+    final_topology = diagnostics.get(
+        "final_cumulative_topology"
+    )
+    if (
+        isinstance(final_topology, dict)
+        and not final_topology.get("topology_safe", False)
+    ):
+        reasons.append("final cumulative topology is unsafe")
 
     if diagnostics["centroid_drift_m"] > 0.003:
         reasons.append(
@@ -193,6 +436,9 @@ def refine_self_alignment_with_observation(
     prepared_view: PreparedView,
     foundationpose_runner: Any,
     output_directory: Path,
+    pose_trust_region_max_rotation_delta_deg: float,
+    pose_trust_region_max_translation_ratio: float,
+    pose_trust_region_max_iou_drop: float,
 ) -> ObservationRefinementResult:
     """
     Depth+silhouette로 self-aligned proxy mesh의 visible geometry를
@@ -217,8 +463,45 @@ def refine_self_alignment_with_observation(
     proxy_mesh = o3d.io.read_triangle_mesh(
         str(self_alignment.scaled_mesh_path)
     )
-    proxy_points = np.asarray(proxy_mesh.vertices, dtype=np.float64)
-    triangles = np.asarray(proxy_mesh.triangles, dtype=np.int64)
+    proxy_points = np.asarray(
+        proxy_mesh.vertices,
+        dtype=np.float64,
+    )
+
+    triangles = np.asarray(
+        proxy_mesh.triangles,
+        dtype=np.int64,
+    )
+
+    proxy_vertex_colors: np.ndarray | None = None
+
+    if proxy_mesh.has_vertex_colors():
+        colors = np.asarray(
+            proxy_mesh.vertex_colors,
+            dtype=np.float64,
+        )
+
+        if colors.shape == (
+            len(proxy_points),
+            3,
+        ):
+            proxy_vertex_colors = (
+                colors.copy()
+            )
+        else:
+            raise ValueError(
+                "Proxy vertex color shape mismatch: "
+                f"colors={colors.shape}, "
+                f"vertices={len(proxy_points)}"
+            )
+
+    print(
+        "[Observation refinement source colors] "
+        f"view={self_alignment.proxy_view} "
+        f"has_vertex_colors="
+        f"{proxy_vertex_colors is not None} "
+        f"vertex_count={len(proxy_points)}"
+    )
 
     pose_camera_from_proxy = np.asarray(
         self_alignment.pose_camera_from_proxy, dtype=np.float64
@@ -241,12 +524,20 @@ def refine_self_alignment_with_observation(
 
     refinement_mode = os.environ.get(
         "COPOSE_REFINEMENT_MODE",
-        "legacy",
+        "dense_strip_arap",
     ).strip().lower()
 
     if refinement_mode == "dense_strip_arap":
         refinement_function = (
             refine_mesh_with_dense_strip_arap
+        )
+    elif refinement_mode == "iterative_contour_arap":
+        refinement_function = (
+            refine_mesh_with_iterative_contour_arap
+        )
+    elif refinement_mode == "weighted_visible_arap":
+        refinement_function = (
+            refine_mesh_with_weighted_visible_arap
         )
     elif refinement_mode == "legacy":
         refinement_function = (
@@ -255,7 +546,9 @@ def refine_self_alignment_with_observation(
     else:
         raise ValueError(
             "COPOSE_REFINEMENT_MODE must be "
-            "'legacy' or 'dense_strip_arap', "
+            "'legacy', 'dense_strip_arap', or "
+            "'iterative_contour_arap', or "
+            "'weighted_visible_arap', "
             f"got {refinement_mode!r}"
         )
 
@@ -279,9 +572,47 @@ def refine_self_alignment_with_observation(
             "[Dense-strip ARAP topology] "
             f"{refinement.diagnostics.get('topology_safety')}"
         )
+    elif refinement_mode == "iterative_contour_arap":
+        print(
+            "[Iterative-contour ARAP topology] "
+            f"{refinement.diagnostics.get('topology_safety')}"
+        )
+        print(
+            "[Iterative-contour ARAP raster IoU] "
+            "before="
+            f"{refinement.diagnostics.get('raster_iou_before')} "
+            "raw="
+            f"{refinement.diagnostics.get('raster_iou_raw')} "
+            "after="
+            f"{refinement.diagnostics.get('raster_iou_after')} "
+            "outer_iterations_completed="
+            f"{refinement.diagnostics.get('outer_iteration_count_completed')}"
+        )
+    elif refinement_mode == "weighted_visible_arap":
+        print(
+            "[Weighted-visible ARAP topology] "
+            f"{refinement.diagnostics.get('final_cumulative_topology')}"
+        )
+        print(
+            "[Weighted-visible ARAP raster IoU] "
+            "before="
+            f"{refinement.diagnostics.get('raster_iou_before')} "
+            "pre_scale="
+            f"{refinement.diagnostics.get('raster_iou_raw')} "
+            "after="
+            f"{refinement.diagnostics.get('raster_iou_after')}"
+        )
 
     diagnostics = dict(
         refinement.diagnostics
+    )
+
+    _write_observation_refinement_diagnostics(
+        output_directory=output_directory,
+        filename="refinement_diagnostics_raw.json",
+        diagnostics=diagnostics,
+        accepted=None,
+        reasons=(),
     )
 
     stage_directory = (
@@ -311,6 +642,9 @@ def refine_self_alignment_with_observation(
             path=stage_path,
             points_camera=stage_points,
             triangles=triangles,
+            vertex_colors=(
+                proxy_vertex_colors
+            ),
         )
 
         stage_mesh_paths[
@@ -362,6 +696,14 @@ def refine_self_alignment_with_observation(
     )
 
     if not accepted:
+        _write_observation_refinement_diagnostics(
+            output_directory=output_directory,
+            filename="refinement_diagnostics.json",
+            diagnostics=diagnostics,
+            accepted=False,
+            reasons=reasons,
+        )
+
         return ObservationRefinementResult(
             self_alignment=self_alignment,
             accepted=False,
@@ -377,19 +719,77 @@ def refine_self_alignment_with_observation(
     refined_proxy_mesh.vertices = o3d.utility.Vector3dVector(
         refined_proxy_points
     )
-    refined_proxy_mesh.triangles = proxy_mesh.triangles
+    refined_proxy_mesh.triangles = (
+        proxy_mesh.triangles
+    )
+
+    if proxy_vertex_colors is not None:
+        refined_proxy_mesh.vertex_colors = (
+            o3d.utility.Vector3dVector(
+                proxy_vertex_colors.copy()
+            )
+        )
+
+    refined_proxy_mesh.compute_triangle_normals()
     refined_proxy_mesh.compute_vertex_normals()
 
     refined_proxy_path = (
         output_directory
         / f"{self_alignment.proxy_view}_refined_proxy.obj"
     )
-    o3d.io.write_triangle_mesh(
-        str(refined_proxy_path),
-        refined_proxy_mesh,
-        write_ascii=False,
-        compressed=False,
-        print_progress=False,
+    saved_refined_proxy = (
+        o3d.io.write_triangle_mesh(
+            str(refined_proxy_path),
+            refined_proxy_mesh,
+            write_ascii=False,
+            compressed=False,
+            print_progress=False,
+        )
+    )
+
+    if not saved_refined_proxy:
+        raise OSError(
+            "Failed to write refined proxy: "
+            f"{refined_proxy_path}"
+        )
+
+    saved_mesh_check = (
+        o3d.io.read_triangle_mesh(
+            str(refined_proxy_path),
+            enable_post_processing=False,
+        )
+    )
+
+    saved_has_vertex_colors = bool(
+        saved_mesh_check.has_vertex_colors()
+    )
+
+    if (
+        proxy_vertex_colors is not None
+        and not saved_has_vertex_colors
+    ):
+        raise RuntimeError(
+            "Refined proxy lost vertex colors "
+            "during serialization: "
+            f"{refined_proxy_path}"
+        )
+
+    diagnostics[
+        "source_has_vertex_colors"
+    ] = bool(
+        proxy_vertex_colors is not None
+    )
+
+    diagnostics[
+        "refined_proxy_has_vertex_colors"
+    ] = saved_has_vertex_colors
+
+    print(
+        "[Observation refinement refined colors] "
+        f"view={self_alignment.proxy_view} "
+        f"has_vertex_colors="
+        f"{saved_has_vertex_colors} "
+        f"path={refined_proxy_path}"
     )
 
     refined_pose = foundationpose_runner.refine_pose_locally(
@@ -409,6 +809,7 @@ def refine_self_alignment_with_observation(
     points_at_t1 = refined_proxy_points @ r1.T + t1
     iou_t1, boundary_t1 = _silhouette_quality(
         points_camera=points_at_t1,
+        triangles=triangles,
         mask_bool=mask_bool,
         camera_k=camera_k,
     )
@@ -416,18 +817,219 @@ def refine_self_alignment_with_observation(
     points_at_t0 = refined_proxy_points @ rotation.T + translation
     iou_t0, boundary_t0 = _silhouette_quality(
         points_camera=points_at_t0,
+        triangles=triangles,
         mask_bool=mask_bool,
         camera_k=camera_k,
     )
 
-    pose_refinement_accepted = iou_t1 >= iou_t0 - 0.02
-    final_pose = (
-        refined_pose if pose_refinement_accepted else pose_camera_from_proxy
+    # --------------------------------------------------------
+    # T0와 T1은 모두 같은 refined-proxy frame에 대한
+    # external object-to-camera pose이다.
+    #
+    # track_one()은 local update 용도이므로 IoU만 개선됐더라도
+    # T0에서 지나치게 멀리 이동한 T1은 다른 pose branch로
+    # 간주하여 거부한다.
+    # --------------------------------------------------------
+    pose_t0 = np.asarray(
+        pose_camera_from_proxy,
+        dtype=np.float64,
     )
+
+    pose_t1 = np.asarray(
+        refined_pose,
+        dtype=np.float64,
+    )
+
+    if (
+        pose_t0.shape != (4, 4)
+        or pose_t1.shape != (4, 4)
+    ):
+        raise ValueError(
+            "T0 and T1 must both have "
+            "shape (4, 4)"
+        )
+
+    maximum_rotation_delta_deg = float(
+        pose_trust_region_max_rotation_delta_deg
+    )
+
+    maximum_translation_delta_ratio = float(
+        pose_trust_region_max_translation_ratio
+    )
+
+    maximum_iou_drop = float(
+        pose_trust_region_max_iou_drop
+    )
+
+    if (
+        not np.isfinite(
+            maximum_rotation_delta_deg
+        )
+        or maximum_rotation_delta_deg < 0.0
+    ):
+        raise ValueError(
+            "COPOSE_TRACK_MAX_ROTATION_DELTA_DEG "
+            "must be finite and non-negative"
+        )
+
+    if (
+        not np.isfinite(
+            maximum_translation_delta_ratio
+        )
+        or maximum_translation_delta_ratio < 0.0
+    ):
+        raise ValueError(
+            "COPOSE_TRACK_MAX_TRANSLATION_RATIO "
+            "must be finite and non-negative"
+        )
+
+    if (
+        not np.isfinite(
+            maximum_iou_drop
+        )
+        or maximum_iou_drop < 0.0
+    ):
+        raise ValueError(
+            "COPOSE_TRACK_MAX_IOU_DROP "
+            "must be finite and non-negative"
+        )
+
+    pose_rotation_delta_deg = (
+        _rotation_delta_deg(
+            pose_t0[:3, :3],
+            pose_t1[:3, :3],
+        )
+    )
+
+    pose_translation_delta_m = float(
+        np.linalg.norm(
+            pose_t1[:3, 3]
+            - pose_t0[:3, 3]
+        )
+    )
+
+    pose_translation_scale_m = float(
+        target_scale_m
+    )
+
+    if (
+        not np.isfinite(
+            pose_translation_scale_m
+        )
+        or pose_translation_scale_m <= 1e-12
+    ):
+        raise ValueError(
+            "Invalid target scale for "
+            "pose translation trust region: "
+            f"{pose_translation_scale_m}"
+        )
+
+    pose_translation_delta_ratio = (
+        pose_translation_delta_m
+        / pose_translation_scale_m
+    )
+
+    pose_iou_gate_passed = bool(
+        iou_t1
+        >= iou_t0
+        - maximum_iou_drop
+    )
+
+    pose_rotation_gate_passed = bool(
+        pose_rotation_delta_deg
+        <= maximum_rotation_delta_deg
+    )
+
+    pose_translation_gate_passed = bool(
+        pose_translation_delta_ratio
+        <= maximum_translation_delta_ratio
+    )
+
+    pose_refinement_rejection_reasons: list[str] = []
+
+    if not pose_iou_gate_passed:
+        pose_refinement_rejection_reasons.append(
+            "IoU gate failed: "
+            f"{iou_t0:.6f} -> {iou_t1:.6f}, "
+            f"maximum drop={maximum_iou_drop:.6f}"
+        )
+
+    if not pose_rotation_gate_passed:
+        pose_refinement_rejection_reasons.append(
+            "rotation trust region failed: "
+            f"{pose_rotation_delta_deg:.3f} deg > "
+            f"{maximum_rotation_delta_deg:.3f} deg"
+        )
+
+    if not pose_translation_gate_passed:
+        pose_refinement_rejection_reasons.append(
+            "translation trust region failed: "
+            f"{pose_translation_delta_ratio:.6f} S* > "
+            f"{maximum_translation_delta_ratio:.6f} S* "
+            f"({pose_translation_delta_m:.6f} m / "
+            f"{pose_translation_scale_m:.6f} m)"
+        )
+
+    pose_refinement_accepted = bool(
+        pose_iou_gate_passed
+        and pose_rotation_gate_passed
+        and pose_translation_gate_passed
+    )
+
+    final_pose = (
+        pose_t1
+        if pose_refinement_accepted
+        else pose_t0
+    )
+
+    print(
+        "[Pose trust-region] "
+        f"view={self_alignment.proxy_view} "
+        f"accepted={pose_refinement_accepted} "
+        f"selected={'T1' if pose_refinement_accepted else 'T0'} "
+        f"rotation_delta_deg={pose_rotation_delta_deg:.3f} "
+        f"translation_delta_m={pose_translation_delta_m:.6f} "
+        f"translation_delta_ratio={pose_translation_delta_ratio:.6f} "
+        f"iou={iou_t0:.6f}->{iou_t1:.6f} "
+        f"limits=("
+        f"{maximum_rotation_delta_deg:.3f}deg, "
+        f"{maximum_translation_delta_ratio:.6f}S*, "
+        f"iou_drop={maximum_iou_drop:.6f})"
+    )
+
+    if pose_refinement_rejection_reasons:
+        print(
+            "[Pose trust-region rejection] "
+            + " | ".join(
+                pose_refinement_rejection_reasons
+            )
+        )
 
     diagnostics.update(
         {
             "pose_refinement_accepted": pose_refinement_accepted,
+            "pose_selected": (
+                "T1"
+                if pose_refinement_accepted
+                else "T0"
+            ),
+            "pose_refinement_rejection_reasons": list(
+                pose_refinement_rejection_reasons
+            ),
+            "pose_iou_gate_passed": pose_iou_gate_passed,
+            "pose_rotation_gate_passed": pose_rotation_gate_passed,
+            "pose_translation_gate_passed": pose_translation_gate_passed,
+            "pose_rotation_delta_deg": pose_rotation_delta_deg,
+            "pose_translation_delta_m": pose_translation_delta_m,
+            "pose_translation_delta_ratio": pose_translation_delta_ratio,
+            "pose_translation_scale_m": pose_translation_scale_m,
+            "pose_maximum_rotation_delta_deg": (
+                maximum_rotation_delta_deg
+            ),
+            "pose_maximum_translation_delta_ratio": (
+                maximum_translation_delta_ratio
+            ),
+            "pose_maximum_iou_drop": maximum_iou_drop,
             "iou_t0": iou_t0,
             "iou_t1": iou_t1,
             "boundary_distance_t0_px": boundary_t0,
@@ -439,6 +1041,14 @@ def refine_self_alignment_with_observation(
         self_alignment,
         scaled_mesh_path=refined_proxy_path,
         pose_camera_from_proxy=final_pose.astype(np.float32),
+    )
+
+    _write_observation_refinement_diagnostics(
+        output_directory=output_directory,
+        filename="refinement_diagnostics.json",
+        diagnostics=diagnostics,
+        accepted=True,
+        reasons=(),
     )
 
     return ObservationRefinementResult(
