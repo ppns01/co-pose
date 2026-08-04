@@ -247,6 +247,42 @@ def _validate_poses(
     )
 
 
+def _validate_affine_transforms(
+    transforms_camera_from_proxy: NDArray[np.floating],
+) -> NDArray[np.float32]:
+    """Validate batched positive-determinant affine render transforms."""
+    transforms = np.asarray(
+        transforms_camera_from_proxy,
+        dtype=np.float32,
+    )
+    if transforms.ndim == 2:
+        transforms = transforms[None, :, :]
+    if transforms.ndim != 3 or transforms.shape[1:] != (4, 4):
+        raise ValueError(
+            "Affine transform shape must be (4,4) or (N,4,4): "
+            f"{transforms.shape}"
+        )
+    if transforms.shape[0] == 0 or not np.isfinite(transforms).all():
+        raise ValueError("Affine transforms must be non-empty and finite")
+    expected_last_row = np.array(
+        [0.0, 0.0, 0.0, 1.0],
+        dtype=np.float32,
+    )
+    if not np.allclose(
+        transforms[:, 3, :],
+        expected_last_row[None, :],
+        atol=1e-5,
+        rtol=0.0,
+    ):
+        raise ValueError("Affine transform last rows are invalid")
+    determinants = np.linalg.det(transforms[:, :3, :3])
+    if np.any(determinants <= 0.0):
+        raise ValueError(
+            "Affine render transforms must have positive determinants"
+        )
+    return np.ascontiguousarray(transforms, dtype=np.float32)
+
+
 def _load_trimesh(
     mesh_path: Path,
 ) -> trimesh.Trimesh:
@@ -645,8 +681,9 @@ class FoundationPoseMeshRenderer:
         camera_matrix: NDArray[np.float32],
         image_height: int,
         image_width: int,
+        include_rgb: bool = True,
     ) -> tuple[
-        NDArray[np.uint8],
+        NDArray[np.uint8] | None,
         NDArray[np.float32],
         NDArray[np.bool_],
     ]:
@@ -736,17 +773,19 @@ class FoundationPoseMeshRenderer:
             torch.zeros_like(depth_tensor),
         )
 
-        rendered_rgb = (
-            color_tensor
-            .clamp(0.0, 1.0)
-            .mul(255.0)
-            .round()
-            .to(
-                device="cpu",
-                dtype=torch.uint8,
+        rendered_rgb = None
+        if include_rgb:
+            rendered_rgb = (
+                color_tensor
+                .clamp(0.0, 1.0)
+                .mul(255.0)
+                .round()
+                .to(
+                    device="cpu",
+                    dtype=torch.uint8,
+                )
+                .numpy()
             )
-            .numpy()
-        )
 
         rendered_depth_m = (
             cleaned_depth_tensor
@@ -773,9 +812,13 @@ class FoundationPoseMeshRenderer:
         del cleaned_depth_tensor
 
         return (
-            np.ascontiguousarray(
-                rendered_rgb,
-                dtype=np.uint8,
+            (
+                np.ascontiguousarray(
+                    rendered_rgb,
+                    dtype=np.uint8,
+                )
+                if rendered_rgb is not None
+                else None
             ),
             np.ascontiguousarray(
                 rendered_depth_m,
@@ -877,6 +920,10 @@ class FoundationPoseMeshRenderer:
                 image_height=image_height,
                 image_width=image_width,
             )
+            if rgb_chunk is None:
+                raise RuntimeError(
+                    "RGB render chunk was unexpectedly omitted"
+                )
 
             rendered_rgb_chunks.append(
                 rgb_chunk
@@ -946,6 +993,59 @@ class FoundationPoseMeshRenderer:
                 resolved_output_directory
             ),
             metadata_path=metadata_path,
+        )
+
+    def render_affine_depth_mask_batch(
+        self,
+        *,
+        mesh_path: Path,
+        transforms_camera_from_proxy: NDArray[np.floating],
+        camera_matrix: NDArray[np.floating],
+        image_height: int,
+        image_width: int,
+    ) -> tuple[NDArray[np.bool_], NDArray[np.float32]]:
+        """Render varying positive-determinant affine candidates in one batch."""
+        if image_height < 1 or image_width < 1:
+            raise ValueError(
+                "Render dimensions must be positive: "
+                f"{(image_height, image_width)}"
+            )
+        transforms = _validate_affine_transforms(
+            transforms_camera_from_proxy
+        )
+        validated_camera_matrix = _validate_camera_matrix(camera_matrix)
+        self.set_mesh(mesh_path)
+
+        depth_chunks: list[NDArray[np.float32]] = []
+        mask_chunks: list[NDArray[np.bool_]] = []
+        for start_index in range(
+            0,
+            transforms.shape[0],
+            self._render_batch_size,
+        ):
+            end_index = min(
+                start_index + self._render_batch_size,
+                transforms.shape[0],
+            )
+            _, depth_chunk, mask_chunk = self._render_chunk(
+                pose_chunk=transforms[start_index:end_index],
+                camera_matrix=validated_camera_matrix,
+                image_height=image_height,
+                image_width=image_width,
+                include_rgb=False,
+            )
+            depth_chunks.append(depth_chunk)
+            mask_chunks.append(mask_chunk)
+
+        return (
+            np.ascontiguousarray(
+                np.concatenate(mask_chunks, axis=0),
+                dtype=np.bool_,
+            ),
+            np.ascontiguousarray(
+                np.concatenate(depth_chunks, axis=0),
+                dtype=np.float32,
+            ),
         )
 
     @staticmethod

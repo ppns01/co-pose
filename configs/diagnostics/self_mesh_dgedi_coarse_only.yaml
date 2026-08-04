@@ -3,7 +3,7 @@ experiment:
   random_seed: 42
   device: cuda:0
   output_root: null
-  pose_path: combined
+  pose_path: self_mesh
 data:
   dataset_root: datasets
   split: test
@@ -58,13 +58,6 @@ foundationpose:
   renderer:
     batch_size: 3
     maximum_texture_size: 1024
-bufferx:
-  enabled: true
-  repository: BUFFER-X
-  python: auto
-  pose_estimator: ransac
-  sample_count: 30000
-  icp_refine: true
 scale:
   normalization:
     quantile_low: 0.01
@@ -107,20 +100,3 @@ alignment:
     minimum_matched_points: 50
     minimum_coverage: 0.05
     coverage_weight: 0.25
-consistency:
-  weights:
-    rotation: 1.0
-    translation: 1.0
-    scale: 0.25
-  rotation_threshold_deg: 15.0
-  translation_threshold_ratio: 0.1
-  maximum_scale_log_difference: null
-  translation_normalizer_m: null
-selection:
-  candidate_weights:
-    self_alignment: 0.2
-    cross_alignment: 0.6
-    dino: 0.2
-  pair_weights:
-    path_evidence: 0.75
-    consistency: 0.25

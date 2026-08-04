@@ -85,6 +85,7 @@ class ExistingMaskAdapterTests(unittest.TestCase):
             self.assertTrue(result.mask_bool_path.is_file())
             self.assertTrue(result.mask_rgb_path.is_file())
             self.assertIsNotNone(result.metadata_path)
+            self.assertEqual(result.source, "existing_mask")
 
             metadata = json.loads(
                 result.metadata_path.read_text(
@@ -95,6 +96,7 @@ class ExistingMaskAdapterTests(unittest.TestCase):
                 metadata["foreground_pixel_count"],
                 20,
             )
+            self.assertEqual(metadata["source"], "existing_mask")
 
     def test_rejects_mask_with_wrong_image_size(self) -> None:
         with tempfile.TemporaryDirectory(

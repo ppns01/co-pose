@@ -54,6 +54,10 @@ TRELLIS/
 
 # Local execution logs
 run_*.log
+*.log
+*.bak*
+*.backup_*
+*.before_*
 
 external_models/dGeDi/
 
@@ -92,3 +96,6 @@ external_models/dGeDi/
 # Python cache
 __pycache__/
 *.pyc
+
+# External tool clone (has its own nested .git)
+bop_toolkit/

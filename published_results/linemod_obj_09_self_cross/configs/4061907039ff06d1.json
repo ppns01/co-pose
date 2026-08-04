@@ -1,0 +1,166 @@
+{
+  "source_config_path": "/home/park/vm/code/configs/pipeline.yaml",
+  "pose_path": "self_cross",
+  "mode": "single_query",
+  "dataset_root": "/home/park/vm/code/datasets",
+  "split": "test",
+  "object_id": 9,
+  "object_name": "duck",
+  "segmentation_source": "sam3",
+  "sam3_prompt": "a small yellow rubber duck",
+  "reference": {
+    "scene_id": 9,
+    "image_id": 0,
+    "instance_index": 0
+  },
+  "query": {
+    "scene_id": 9,
+    "image_id": 3,
+    "instance_index": 0
+  },
+  "query_image_ids": null,
+  "mask_type": "mask_visib",
+  "instantmesh_repository": "/home/park/vm/code/InstantMesh",
+  "instantmesh_python": "/home/park/miniforge3/envs/instantmesh_clean/bin/python3.10",
+  "instantmesh_config": "/home/park/vm/code/configs/instantmesh_16gb/instant-mesh-large.yaml",
+  "instantmesh_offline": false,
+  "foundationpose_repository": "/home/park/vm/code/FoundationPose",
+  "output_root": "/home/park/vm/code/outputs/duck_q3_instantmesh_ref_query_v1",
+  "device": "cuda:0",
+  "top_k": 20,
+  "refine_iterations": 5,
+  "foundationpose_workers": 1,
+  "dino_enabled": true,
+  "dinov3_repository": "/home/park/vm/code/dinov3",
+  "dinov3_checkpoint": "/home/park/vm/code/dinov3/weights/dinov3-vitl16-pretrain-lvd1689m",
+  "dinov3_model": "dinov3_vitl16",
+  "dinov3_backend": "huggingface_transformers",
+  "generator": "instantmesh",
+  "random_seed": 42,
+  "random_seed_scope": "instantmesh_and_dinov3_surface",
+  "sam3": {
+    "repository": "/home/park/vm/code/sam3",
+    "checkpoint": "/home/park/vm/code/sam3/weights/sam3.pt",
+    "bpe": "/home/park/vm/code/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz",
+    "prompt": "a small yellow rubber duck",
+    "device": "cuda",
+    "use_amp": true,
+    "confidence_threshold": 0.3
+  },
+  "instantmesh": {
+    "repository": "/home/park/vm/code/InstantMesh",
+    "python": "/home/park/miniforge3/envs/instantmesh_clean/bin/python3.10",
+    "config": "/home/park/vm/code/configs/instantmesh_16gb/instant-mesh-large.yaml",
+    "offline": false,
+    "diffusion_steps": 75,
+    "view_count": 6,
+    "model_scale": 1.0,
+    "render_distance": 4.5,
+    "use_rembg": true,
+    "export_texture_map": false,
+    "save_video": false
+  },
+  "dinov3": {
+    "enabled": true,
+    "repository": "/home/park/vm/code/dinov3",
+    "checkpoint": "/home/park/vm/code/dinov3/weights/dinov3-vitl16-pretrain-lvd1689m",
+    "model": "dinov3_vitl16",
+    "target_long_side": 448,
+    "use_amp": true,
+    "save_dtype": "float16",
+    "maximum_surface_points": 50000,
+    "feature_chunk_size": 8192
+  },
+  "foundationpose": {
+    "repository": "/home/park/vm/code/FoundationPose",
+    "top_k": 20,
+    "refine_iterations": 5,
+    "workers": 1,
+    "debug": 0,
+    "renderer": {
+      "batch_size": 3,
+      "maximum_texture_size": 1024
+    }
+  },
+  "bufferx": {
+    "enabled": true,
+    "repository": "/home/park/vm/code/BUFFER-X",
+    "python": "/home/park/miniforge3/envs/bufferx/bin/python3.11",
+    "pose_estimator": "ransac",
+    "sample_count": 30000,
+    "icp_refine": true,
+    "result_scope": "independent_mesh_to_mesh_comparison"
+  },
+  "scale": {
+    "normalization": {
+      "quantile_low": 0.01,
+      "quantile_high": 0.99,
+      "sample_count": 100000,
+      "random_seed": 0,
+      "tolerance": 1e-05
+    },
+    "depth": {
+      "quantile_low": 0.05,
+      "quantile_high": 0.95,
+      "multipliers": [
+        0.8,
+        1.0,
+        1.25,
+        1.5,
+        1.8
+      ],
+      "minimum_valid_points": 100,
+      "maximum_points": 200000,
+      "minimum_depth_m": 0.0,
+      "maximum_depth_m": null,
+      "save_point_cloud": false
+    },
+    "visible_refinement": {
+      "enabled": true,
+      "reference_enabled": true,
+      "query_enabled": true,
+      "minimum_loss_improvement_ratio": 0.01
+    }
+  },
+  "alignment": {
+    "weights": {
+      "mask": 0.3,
+      "depth": 0.4,
+      "free_space": 0.2,
+      "boundary": 0.1
+    },
+    "depth_trim_quantile": 0.9,
+    "minimum_depth_overlap_pixels": 50,
+    "free_space_absolute_tolerance_m": 0.005,
+    "free_space_relative_tolerance": 0.02,
+    "dino": {
+      "depth_absolute_tolerance_m": 0.005,
+      "depth_relative_tolerance": 0.02,
+      "minimum_matched_points": 50,
+      "minimum_coverage": 0.05,
+      "coverage_weight": 0.25
+    }
+  },
+  "consistency": {
+    "weights": {
+      "rotation": 1.0,
+      "translation": 1.0,
+      "scale": 0.25
+    },
+    "rotation_threshold_deg": 15.0,
+    "translation_threshold_ratio": 0.1,
+    "maximum_scale_log_difference": null,
+    "translation_normalizer_m": null
+  },
+  "selection": {
+    "candidate_weights": {
+      "self_alignment": 0.2,
+      "cross_alignment": 0.6,
+      "dino": 0.2
+    },
+    "pair_weights": {
+      "path_evidence": 0.75,
+      "consistency": 0.25
+    }
+  }
+}

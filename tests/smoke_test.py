@@ -143,47 +143,10 @@ MODULE_CHECKS = (
         ),
     ),
     ModuleCheck(
-        module_name="pose.cross_alignment_runner",
-        required_symbols=(
-            "CrossAlignmentResult",
-            "run_bidirectional_cross_alignment",
-        ),
-    ),
-    ModuleCheck(
-        module_name="pose.bufferx_runner",
-        required_symbols=(
-            "BufferXRegistrationResult",
-            "compose_bufferx_relative_pose",
-            "run_bufferx_registration",
-        ),
-    ),
-    ModuleCheck(
         module_name="pose.relative_pose_builder",
         required_symbols=(
             "SelfAlignmentSelection",
-            "RelativePoseCandidate",
-            "build_bidirectional_relative_candidates",
-        ),
-    ),
-    ModuleCheck(
-        module_name="pose.bidirectional_consistency",
-        required_symbols=(
-            "BidirectionalConsistencyResult",
-            "evaluate_bidirectional_consistency",
-        ),
-    ),
-    ModuleCheck(
-        module_name="pose.cross_alignment_evaluator",
-        required_symbols=(
-            "BidirectionalCrossEvidenceResult",
-            "evaluate_bidirectional_cross_evidence",
-        ),
-    ),
-    ModuleCheck(
-        module_name="pose.final_candidate_selector",
-        required_symbols=(
-            "FinalSelectionResult",
-            "select_final_candidate",
+            "select_self_alignment",
         ),
     ),
     ModuleCheck(

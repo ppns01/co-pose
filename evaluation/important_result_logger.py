@@ -138,7 +138,6 @@ PAIR_CSV_FIELDS = (
     "total_time_sec",
     "visible_scale_time_sec",
     "foundationpose_time_sec",
-    "bufferx_time_sec",
 )
 
 
@@ -281,7 +280,6 @@ class RuntimeMetrics:
     total_time_sec: float | None = None
     visible_scale_time_sec: float | None = None
     foundationpose_time_sec: float | None = None
-    bufferx_time_sec: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1085,7 +1083,6 @@ def save_important_pair_result(
         "total_time_sec": result.runtime.total_time_sec,
         "visible_scale_time_sec": result.runtime.visible_scale_time_sec,
         "foundationpose_time_sec": result.runtime.foundationpose_time_sec,
-        "bufferx_time_sec": result.runtime.bufferx_time_sec,
     }
 
     with _FileLock(lock_path):

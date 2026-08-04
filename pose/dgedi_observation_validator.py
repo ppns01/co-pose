@@ -28,6 +28,109 @@ class DGeDiObservationValidationResult:
     metrics: dict[str, dict[str, float | int]]
 
 
+@dataclass(frozen=True)
+class DGeDiFallbackDecision:
+    selected_pose_query_from_reference: np.ndarray
+    selected_method: str
+    used_foundationpose_fallback: bool
+    rotation_deviation_deg: float
+    translation_deviation_m: float
+    dgedi_mean_cross_loss: float
+    foundationpose_mean_cross_loss: float
+    absolute_loss_improvement: float
+    relative_loss_improvement: float
+    observation_improved_clearly: bool
+    reason: str
+
+
+def _mean_cross_loss(
+    validation: DGeDiObservationValidationResult,
+) -> float:
+    return float(
+        (
+            float(validation.metrics["reference_cross"]["total_loss"])
+            + float(validation.metrics["query_cross"]["total_loss"])
+        )
+        * 0.5
+    )
+
+
+def select_dgedi_with_foundationpose_fallback(
+    *,
+    dgedi_pose_query_from_reference: np.ndarray,
+    foundationpose_pose_query_from_reference: np.ndarray,
+    dgedi_validation: DGeDiObservationValidationResult,
+    foundationpose_validation: DGeDiObservationValidationResult,
+    maximum_rotation_deviation_deg: float = 5.0,
+    maximum_translation_deviation_m: float = 0.020,
+    minimum_absolute_loss_improvement: float = 0.005,
+    minimum_relative_loss_improvement: float = 0.05,
+) -> DGeDiFallbackDecision:
+    """Fallback when a large dGeDi correction lacks clear observation gain."""
+    dgedi_pose = _rigid(dgedi_pose_query_from_reference, "dGeDi pose")
+    foundationpose_pose = _rigid(
+        foundationpose_pose_query_from_reference,
+        "FoundationPose-only pose",
+    )
+    rotation_delta = (
+        dgedi_pose[:3, :3] @ foundationpose_pose[:3, :3].T
+    )
+    cosine = float(
+        np.clip((np.trace(rotation_delta) - 1.0) * 0.5, -1.0, 1.0)
+    )
+    rotation_deviation_deg = float(np.degrees(np.arccos(cosine)))
+    translation_deviation_m = float(
+        np.linalg.norm(
+            dgedi_pose[:3, 3] - foundationpose_pose[:3, 3]
+        )
+    )
+    dgedi_loss = _mean_cross_loss(dgedi_validation)
+    foundationpose_loss = _mean_cross_loss(foundationpose_validation)
+    absolute_improvement = foundationpose_loss - dgedi_loss
+    relative_improvement = absolute_improvement / max(
+        foundationpose_loss,
+        1e-12,
+    )
+    improved_clearly = (
+        dgedi_validation.accepted
+        and absolute_improvement >= minimum_absolute_loss_improvement
+        and relative_improvement >= minimum_relative_loss_improvement
+    )
+    large_deviation = (
+        rotation_deviation_deg >= maximum_rotation_deviation_deg
+        or translation_deviation_m >= maximum_translation_deviation_m
+    )
+    use_fallback = large_deviation and not improved_clearly
+    if use_fallback:
+        reason = (
+            "dGeDi deviated beyond the 5deg/2cm trust region without "
+            "an accepted, clear bidirectional observation-loss improvement"
+        )
+        selected_pose = foundationpose_pose
+        selected_method = "foundationpose_only_fallback"
+    else:
+        reason = (
+            "dGeDi stayed within the trust region or clearly improved "
+            "bidirectional observation loss"
+        )
+        selected_pose = dgedi_pose
+        selected_method = "dgedi_visible_surface"
+
+    return DGeDiFallbackDecision(
+        selected_pose_query_from_reference=selected_pose.copy(),
+        selected_method=selected_method,
+        used_foundationpose_fallback=use_fallback,
+        rotation_deviation_deg=rotation_deviation_deg,
+        translation_deviation_m=translation_deviation_m,
+        dgedi_mean_cross_loss=dgedi_loss,
+        foundationpose_mean_cross_loss=foundationpose_loss,
+        absolute_loss_improvement=absolute_improvement,
+        relative_loss_improvement=relative_improvement,
+        observation_improved_clearly=improved_clearly,
+        reason=reason,
+    )
+
+
 def _default_raycast_function() -> RaycastFunction:
     return _raycast_mesh
 
@@ -147,14 +250,29 @@ def _view_rejection_reasons(
     baseline: AlignmentScoreResult,
     cross: AlignmentScoreResult,
     minimum_depth_overlap_pixels: int,
+    minimum_mask_iou: float = 0.50,
+    baseline_mask_iou_drop: float = 0.20,
+    maximum_depth_residual_normalized: float = 0.15,
+    baseline_depth_residual_margin: float = 0.10,
+    maximum_total_loss: float = 0.45,
+    baseline_total_loss_margin: float = 0.20,
 ) -> list[str]:
     reasons: list[str] = []
-    minimum_iou = max(0.50, baseline.mask_iou - 0.20)
-    maximum_depth_ratio = max(
-        0.15,
-        baseline.depth_residual_normalized + 0.10,
+    minimum_iou = max(
+        minimum_mask_iou,
+        baseline.mask_iou - baseline_mask_iou_drop,
     )
-    maximum_total_loss = max(0.45, baseline.total_loss + 0.20)
+    maximum_depth_ratio = max(
+        maximum_depth_residual_normalized,
+        (
+            baseline.depth_residual_normalized
+            + baseline_depth_residual_margin
+        ),
+    )
+    allowed_total_loss = max(
+        maximum_total_loss,
+        baseline.total_loss + baseline_total_loss_margin,
+    )
 
     if cross.rendered_pixel_count == 0:
         reasons.append(f"{view_name}: cross render is empty")
@@ -175,10 +293,10 @@ def _view_rejection_reasons(
             f"({cross.depth_residual_normalized:.3f} > "
             f"{maximum_depth_ratio:.3f})"
         )
-    if cross.total_loss > maximum_total_loss:
+    if cross.total_loss > allowed_total_loss:
         reasons.append(
             f"{view_name}: alignment loss too large "
-            f"({cross.total_loss:.3f} > {maximum_total_loss:.3f})"
+            f"({cross.total_loss:.3f} > {allowed_total_loss:.3f})"
         )
     return reasons
 
@@ -200,13 +318,22 @@ def validate_dgedi_against_observations(
     minimum_depth_overlap_pixels: int,
     free_space_absolute_tolerance_m: float,
     free_space_relative_tolerance: float,
+    minimum_mask_iou: float = 0.50,
+    baseline_mask_iou_drop: float = 0.20,
+    maximum_depth_residual_normalized: float = 0.15,
+    baseline_depth_residual_margin: float = 0.10,
+    maximum_total_loss: float = 0.45,
+    baseline_total_loss_margin: float = 0.20,
+    object_scale_m: float | None = None,
+    diagnostic_only: bool = False,
     raycast_function: RaycastFunction | None = None,
 ) -> DGeDiObservationValidationResult:
     """Validate dGeDi in both directions against real mask and depth.
 
     The self-aligned target mesh is rendered as a per-view baseline.  The
     opposite mesh is then transformed by dGeDi and rendered into the same
-    camera.  A pose is published only when both cross renders pass.
+    camera. In diagnostic_only mode the legacy thresholds are reported but
+    never used by the caller as a publication gate.
     """
     pose = _rigid(
         relative_pose_query_from_reference,
@@ -262,8 +389,20 @@ def validate_dgedi_against_observations(
         ),
         "free_space_relative_tolerance": free_space_relative_tolerance,
     }
-    reference_scale = _diameter(reference_points)
-    query_scale = _diameter(query_points)
+    if object_scale_m is not None and (
+        not np.isfinite(object_scale_m) or object_scale_m <= 0.0
+    ):
+        raise ValueError("object_scale_m must be finite and positive")
+    reference_scale = (
+        float(object_scale_m)
+        if object_scale_m is not None
+        else _diameter(reference_points)
+    )
+    query_scale = (
+        float(object_scale_m)
+        if object_scale_m is not None
+        else _diameter(query_points)
+    )
     reference_baseline = score_alignment(
         observed_mask=reference_mask,
         observed_depth_m=reference_depth,
@@ -302,6 +441,16 @@ def validate_dgedi_against_observations(
         baseline=reference_baseline,
         cross=reference_cross,
         minimum_depth_overlap_pixels=minimum_depth_overlap_pixels,
+        minimum_mask_iou=minimum_mask_iou,
+        baseline_mask_iou_drop=baseline_mask_iou_drop,
+        maximum_depth_residual_normalized=(
+            maximum_depth_residual_normalized
+        ),
+        baseline_depth_residual_margin=(
+            baseline_depth_residual_margin
+        ),
+        maximum_total_loss=maximum_total_loss,
+        baseline_total_loss_margin=baseline_total_loss_margin,
     )
     reasons.extend(
         _view_rejection_reasons(
@@ -309,6 +458,16 @@ def validate_dgedi_against_observations(
             baseline=query_baseline,
             cross=query_cross,
             minimum_depth_overlap_pixels=minimum_depth_overlap_pixels,
+            minimum_mask_iou=minimum_mask_iou,
+            baseline_mask_iou_drop=baseline_mask_iou_drop,
+            maximum_depth_residual_normalized=(
+                maximum_depth_residual_normalized
+            ),
+            baseline_depth_residual_margin=(
+                baseline_depth_residual_margin
+            ),
+            maximum_total_loss=maximum_total_loss,
+            baseline_total_loss_margin=baseline_total_loss_margin,
         )
     )
 
@@ -343,20 +502,32 @@ def validate_dgedi_against_observations(
     }
     summary_path = output_root / "dgedi_observation_validation.json"
     payload = {
-        "status": "CONSISTENT" if not reasons else "REJECT",
+        "status": (
+            "EVALUATED"
+            if diagnostic_only
+            else ("CONSISTENT" if not reasons else "REJECT")
+        ),
         "accepted": not reasons,
+        "decision_mode": (
+            "diagnostic_only" if diagnostic_only else "legacy_hard_gate"
+        ),
+        "legacy_gate_would_accept": not reasons,
         "pose_convention": "T_query_camera_from_reference_camera",
         "relative_pose_query_from_reference": pose.tolist(),
         "policy": {
             "directions": ["query_to_reference", "reference_to_query"],
-            "minimum_mask_iou": "max(0.50, self_baseline_iou - 0.20)",
+            "minimum_mask_iou": minimum_mask_iou,
+            "baseline_mask_iou_drop": baseline_mask_iou_drop,
             "maximum_normalized_depth_residual": (
-                "max(0.15, self_baseline_depth_residual + 0.10)"
+                maximum_depth_residual_normalized
             ),
-            "maximum_total_loss": (
-                "max(0.45, self_baseline_total_loss + 0.20)"
+            "baseline_depth_residual_margin": (
+                baseline_depth_residual_margin
             ),
+            "maximum_total_loss": maximum_total_loss,
+            "baseline_total_loss_margin": baseline_total_loss_margin,
             "minimum_depth_overlap_pixels": minimum_depth_overlap_pixels,
+            "fixed_object_scale_m": object_scale_m,
         },
         "reasons": reasons,
         "metrics": metrics,

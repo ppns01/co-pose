@@ -5,9 +5,26 @@ experiment:
   random_seed: 42
   device: cuda:0
   output_root: null
-  # combined preserves the existing main.py behavior.
-  # Method-specific main files override this automatically.
-  pose_path: combined
+  # self_mesh is the only supported pose path.
+  pose_path: self_mesh
+
+# results_only keeps compact pose/error JSON files and removes per-query
+# meshes, renders, hypotheses, and feature tensors after each query.
+# resume skips queries that batch_summary.json already marks "completed"
+# in output_root, so a crashed/killed run can continue without redoing
+# finished queries. The shared reference is always recomputed.
+storage:
+  results_only: true
+  keep_failed_intermediates: false
+  resume: false
+
+linemod_all:
+  object_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+  # 1 + null executes every non-reference frame. For a smoke test, use
+  # query_stride: 100 and maximum_queries_per_object: 1.
+  query_stride: 1
+  maximum_queries_per_object: null
+  continue_on_error: true
 
 data:
   dataset_root: datasets
@@ -25,6 +42,10 @@ data:
     image_id: 1
     image_ids: null
     instance_index: 0
+
+segmentation:
+  # GT fallback makes the run GT-assisted and is recorded in every result.
+  gt_mask_fallback_on_sam3_failure: true
 
 sam3:
   repository: sam3
@@ -62,31 +83,49 @@ dinov3:
 
 foundationpose:
   repository: FoundationPose
-  top_k: 3
+  top_k: 8
+  # score top-K가 한 회전 basin에 몰리지 않도록 self-alignment 후보를 NMS한다.
+  rotation_diversity_threshold_deg: 30.0
   refine_iterations: 5
   workers: 2
   debug: 0
   renderer:
-    batch_size: 3
+    batch_size: 8
     maximum_texture_size: 1024
-
-# Independent mesh-to-mesh path after both self alignments.
-# Its result is saved separately and does not replace Cross.
-bufferx:
-  enabled: true
-  repository: BUFFER-X
-  python: auto
-  pose_estimator: ransac
-  sample_count: 30000
-  icp_refine: true
 
 scale:
   normalization:
+    # 정규화와 local 축별 보정에서 같은 robust surface 통계를 사용한다.
     quantile_low: 0.01
     quantile_high: 0.99
     sample_count: 100000
     random_seed: 0
     tolerance: 0.00001
+  axis_refinement:
+    # A0/B0가 정의한 camera (u,v,depth) 축에서 view별로 독립 탐색한다.
+    # depth 축은 관측 depth span이 작을수록 아래 uncertainty penalty가
+    # 강해져 identity에 머문다. 범위는 수치적 안전 한계일 뿐 hard prior가 아니다.
+    minimum_factor: 0.50
+    maximum_factor: 2.00
+    grid_step_count: 7
+    scale_penalty_weight: 0.02
+    uncertainty_scale_penalty_weight: 0.10
+    minimum_loss_improvement_ratio: 0.0
+    # Coarse-to-fine: keep the coarse_shortlist_count best 7^3 candidates,
+    # then refine a +/-fine_factor_radius neighborhood (fine_grid_step_count
+    # steps per axis) around each so the final resolution isn't limited to
+    # the coarse grid_step_count spacing.
+    coarse_shortlist_count: 5
+    fine_factor_radius: 0.10
+    fine_grid_step_count: 5
+  shared_axis_refinement:
+    # On by default: reuses axis_refinement's grid/penalty parameters, but
+    # searches one D shared by both proxies (Cr=D, Cq=R0 D R0^T) using
+    # dGeDi's own first-pass rotation R0 (G0) instead of each view's
+    # self-pose. G0 is diagnostic-only here, used only to derive R0; the
+    # final registration is computed exactly once, downstream, by the
+    # normal final-dGeDi stage -- see scale/shared_axis_scale_refiner.py.
+    enabled: true
   depth:
     quantile_low: 0.05
     quantile_high: 0.95
@@ -102,6 +141,55 @@ scale:
     reference_enabled: true
     query_enabled: true
     minimum_loss_improvement_ratio: 0.01
+    policy: joint_shared
+    local_scale_multipliers: [0.9512294245, 1.0, 1.0512710964]
+    mask_erosion_kernel_size: 3
+    minimum_correspondences: 500
+    minimum_spatial_coverage: 0.20
+    depth_absolute_tolerance_m: 0.03
+    depth_relative_tolerance: 0.05
+    irls_iterations: 3
+    huber_delta_m: 0.01
+    maximum_abs_log_correction: 0.25
+    coverage_grid_size: 8
+dgedi:
+  repository: external_models/dGeDi
+  python: auto
+  config: external_models/dGeDi/config_dgedi.yaml
+  mode: multi_scale
+  device: cuda
+  sample_count: 30000
+  ransac_threshold: 0.03
+  icp_threshold: 0.03
+  # Final proxy의 first ray-hit와 관측 depth가 일치해야 하는 최대 거리.
+  maximum_surface_depth_residual_m: 0.010
+  minimum_visible_depth_pixels: 256
+  minimum_pair_point_count_ratio: 0.10
+  minimum_pair_diameter_ratio: 0.10
+  confidence:
+    weights:
+      correspondence: 0.15
+      inlier: 0.15
+      rmse: 0.15
+      mask: 0.20
+      depth: 0.25
+      free_space: 0.10
+    target_correspondence_fraction: 0.10
+    good_inlier_fitness: 0.50
+    maximum_normalized_rmse: 0.05
+    maximum_normalized_depth_residual: 0.20
+  final_selection:
+    rotation_penalty_weight: 0.05
+    uncertainty_penalty_weight: 0.05
+    deformation_penalty_weight: 0.05
+    near_tie_margin: 0.01
+  observation_validation:
+    minimum_mask_iou: 0.50
+    baseline_mask_iou_drop: 0.20
+    maximum_depth_residual_normalized: 0.15
+    baseline_depth_residual_margin: 0.10
+    maximum_total_loss: 0.45
+    baseline_total_loss_margin: 0.20
 
 alignment:
   weights:
@@ -119,22 +207,3 @@ alignment:
     minimum_matched_points: 50
     minimum_coverage: 0.05
     coverage_weight: 0.25
-
-consistency:
-  weights:
-    rotation: 1.0
-    translation: 1.0
-    scale: 0.25
-  rotation_threshold_deg: 15.0
-  translation_threshold_ratio: 0.10
-  maximum_scale_log_difference: null
-  translation_normalizer_m: null
-
-selection:
-  candidate_weights:
-    self_alignment: 0.20
-    cross_alignment: 0.60
-    dino: 0.20
-  pair_weights:
-    path_evidence: 0.75
-    consistency: 0.25

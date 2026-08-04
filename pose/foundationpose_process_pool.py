@@ -56,6 +56,7 @@ def _initialize_worker_runner(
     repository_path: Path,
     output_root: Path,
     top_k: int,
+    rotation_diversity_threshold_deg: float,
     refine_iterations: int,
     debug: int,
     device: str,
@@ -72,6 +73,9 @@ def _initialize_worker_runner(
         repository_path=repository_path,
         output_root=output_root,
         top_k=top_k,
+        rotation_diversity_threshold_deg=(
+            rotation_diversity_threshold_deg
+        ),
         refine_iterations=refine_iterations,
         debug=debug,
         device=device,
@@ -89,6 +93,13 @@ def _run_worker_job(
         raise RuntimeError(
             "FoundationPose worker가 초기화되지 않았습니다."
         )
+
+    print(
+        "[FoundationPose job starting] "
+        f"job={job.job_name} "
+        f"view={job.prepared_view.view.source.name} "
+        f"candidate={job.candidate.candidate_index}"
+    )
 
     try:
         return runner.run_candidate(
@@ -223,6 +234,7 @@ def run_foundationpose_jobs(
     repository_path: Path,
     output_root: Path,
     top_k: int,
+    rotation_diversity_threshold_deg: float = 0.0,
     refine_iterations: int,
     device: str,
     worker_count: int,
@@ -274,6 +286,9 @@ def run_foundationpose_jobs(
                 repository_path=repository_path,
                 output_root=output_root,
                 top_k=top_k,
+                rotation_diversity_threshold_deg=(
+                    rotation_diversity_threshold_deg
+                ),
                 refine_iterations=refine_iterations,
                 debug=debug,
                 device=device,
@@ -317,6 +332,7 @@ def run_foundationpose_jobs(
                 repository_path,
                 output_root,
                 top_k,
+                rotation_diversity_threshold_deg,
                 refine_iterations,
                 debug,
                 device,

@@ -65,47 +65,6 @@ def _as_rigid_transform(
     return transform
 
 
-def compose_cross_mesh_relative_pose(
-    *,
-    reference_proxy_to_query_camera: Any,
-    query_proxy_to_reference_camera: Any,
-    proxy_pose_query_from_reference: Any,
-) -> np.ndarray:
-    """
-    Compose Cross + mesh-to-mesh without either self pose.
-
-    B = T_Cq_from_Pr
-    C = T_Cr_from_Pq
-    M = T_Pq_from_Pr
-
-    T_Cq_from_Cr = B @ inv(M) @ inv(C)
-    """
-
-    reference_cross = _as_rigid_transform(
-        reference_proxy_to_query_camera,
-        name="reference_proxy_to_query_camera",
-    )
-    query_cross = _as_rigid_transform(
-        query_proxy_to_reference_camera,
-        name="query_proxy_to_reference_camera",
-    )
-    proxy_registration = _as_rigid_transform(
-        proxy_pose_query_from_reference,
-        name="proxy_pose_query_from_reference",
-    )
-
-    relative_pose = (
-        reference_cross
-        @ np.linalg.inv(proxy_registration)
-        @ np.linalg.inv(query_cross)
-    )
-
-    return _as_rigid_transform(
-        relative_pose,
-        name="relative_pose_query_from_reference",
-    )
-
-
 def save_independent_pose_path(
     *,
     method: str,
@@ -113,6 +72,7 @@ def save_independent_pose_path(
     output_directory: Path,
     composition: str,
     sources: Mapping[str, Any],
+    selection_policy: str | None = None,
 ) -> IndependentPosePathResult:
     pose = _as_rigid_transform(
         relative_pose_query_from_reference,
@@ -151,10 +111,14 @@ def save_independent_pose_path(
         "relative_pose_query_from_reference": (
             pose.tolist()
         ),
+        "pose_accepted": True,
         "sources": dict(sources),
         "selection_policy": (
-            "independent; no comparison, averaging, "
-            "consensus, or rejection against another method"
+            selection_policy
+            or (
+                "independent; no comparison, averaging, "
+                "consensus, or rejection against another method"
+            )
         ),
     }
 
@@ -175,3 +139,64 @@ def save_independent_pose_path(
         pose_path=pose_path,
         summary_path=summary_path,
     )
+
+
+def save_rejected_pose_path(
+    *,
+    method: str,
+    output_directory: Path,
+    reason: str,
+    sources: Mapping[str, Any],
+    relative_pose_query_from_reference: Any | None = None,
+    composition: str | None = None,
+) -> Path:
+    """Write a REJECT summary and optionally preserve its raw estimate."""
+    output_root = Path(output_directory).expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    summary_path = output_root / "final_selection.json"
+    rejected_pose_path: Path | None = None
+    rejected_pose: np.ndarray | None = None
+    if relative_pose_query_from_reference is not None:
+        rejected_pose = _as_rigid_transform(
+            relative_pose_query_from_reference,
+            name="rejected relative_pose_query_from_reference",
+        )
+        rejected_pose_path = output_root / "rejected_relative_pose.npy"
+        np.save(
+            rejected_pose_path,
+            rejected_pose,
+            allow_pickle=False,
+        )
+
+    payload = {
+        "status": "REJECT",
+        "method": method,
+        "pose_convention": "T_query_camera_from_reference_camera",
+        "composition": composition,
+        "pose_accepted": False,
+        "relative_pose_query_from_reference": (
+            rejected_pose.tolist()
+            if rejected_pose is not None
+            else None
+        ),
+        "rejected_pose_path": (
+            str(rejected_pose_path)
+            if rejected_pose_path is not None
+            else None
+        ),
+        "reason": str(reason),
+        "sources": dict(sources),
+        "selection_policy": (
+            "independent dual-proxy result only; no same-proxy or "
+            "B*A^-1 fallback"
+        ),
+    }
+    with summary_path.open(mode="w", encoding="utf-8") as file:
+        json.dump(
+            payload,
+            file,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    return summary_path

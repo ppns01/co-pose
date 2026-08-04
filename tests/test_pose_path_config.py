@@ -14,12 +14,12 @@ class PosePathConfigTest(unittest.TestCase):
         self,
     ) -> None:
         expected_prompts = {
-            1: "red toy monkey",
-            5: "blue tin can",
+            1: "brown toy",
+            5: "white watering can",
             6: "pink cat figurine",
-            10: "white egg carton",
+            10: "plastic case",
             12: "blue paper hole punch",
-            15: "cordless phone",
+            15: "phone handset",
         }
 
         self.assertEqual(
@@ -35,14 +35,14 @@ class PosePathConfigTest(unittest.TestCase):
             expected_prompts,
         )
 
-    def test_default_main_preserves_combined_mode(
+    def test_default_main_uses_self_mesh_mode(
         self,
     ) -> None:
         config = build_config(parse_args([]))
 
         self.assertEqual(
             config.pose_path,
-            "combined",
+            "self_mesh",
         )
 
     def test_method_override_is_applied(
@@ -52,20 +52,31 @@ class PosePathConfigTest(unittest.TestCase):
             parse_args(
                 [
                     "--pose-path",
-                    "cross_mesh",
+                    "self_mesh",
                 ]
             )
         )
 
         self.assertEqual(
             config.pose_path,
-            "cross_mesh",
+            "self_mesh",
         )
         self.assertTrue(
             config.output_root.name.endswith(
-                "_cross_mesh"
+                "_self_mesh"
             )
         )
+
+    def test_removed_cross_mesh_path_is_rejected(
+        self,
+    ) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(
+                [
+                    "--pose-path",
+                    "cross_mesh",
+                ]
+            )
 
 
 if __name__ == "__main__":

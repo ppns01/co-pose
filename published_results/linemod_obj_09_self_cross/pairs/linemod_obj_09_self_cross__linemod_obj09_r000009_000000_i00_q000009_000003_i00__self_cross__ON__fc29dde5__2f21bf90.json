@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "result_key": "linemod_obj_09_self_cross__linemod_obj09_r000009_000000_i00_q000009_000003_i00__self_cross__ON__fc29dde5__2f21bf90",
+  "timestamp_utc": "2026-08-01T18:37:29+00:00",
+  "experiment": {
+    "name": "linemod_obj_09_self_cross",
+    "comparison_group": "linemod_obj_09_self_cross",
+    "variant": "ON",
+    "visible_scale_enabled": true,
+    "run_id": "run_20260802T033324406271+0900_2f21bf90",
+    "method": "self_cross",
+    "git_commit": "fc29dde5a7704442b477494ee3cdaf1948f52c72",
+    "config_hash": "2f21bf90ebe14928f1346f038f698025b44f6b590d7b60a5726c48951d5b2a63",
+    "config_snapshot": "configs/2f21bf90ebe14928.json"
+  },
+  "pair": {
+    "pair_id": "linemod_obj09_r000009_000000_i00_q000009_000003_i00",
+    "dataset": "linemod",
+    "split": "test",
+    "object_id": 9,
+    "object_name": "duck",
+    "reference": {
+      "scene_id": 9,
+      "image_id": 0,
+      "instance_index": 0
+    },
+    "query": {
+      "scene_id": 9,
+      "image_id": 3,
+      "instance_index": 0
+    }
+  },
+  "selection": {
+    "status": "CONSISTENT",
+    "rejection_reason": null,
+    "selected_path": "query_proxy",
+    "rotation_difference_deg": 1.070543639279295,
+    "translation_difference_cm": 1.4952279045505075,
+    "normalized_translation_difference": 0.09625555382740542,
+    "selection_score": 0.8992849831806953,
+    "top1_top2_margin": 0.01811962954972554
+  },
+  "scale": {
+    "reference": {
+      "initial_scale_m": null,
+      "estimated_scale_m": null,
+      "selected_scale_m": 0.1512828583322279,
+      "alpha": null,
+      "log_scale_delta": null,
+      "correspondence_count": null,
+      "inlier_count": null,
+      "inlier_ratio": null,
+      "spatial_coverage": null,
+      "median_residual_3d_m": null,
+      "p90_residual_3d_m": null,
+      "median_abs_residual_object_x_m": null,
+      "median_abs_residual_object_y_m": null,
+      "median_abs_residual_object_z_m": null,
+      "correction_accepted": null,
+      "rejection_reason": null
+    },
+    "query": {
+      "initial_scale_m": null,
+      "estimated_scale_m": null,
+      "selected_scale_m": 0.1593959222878662,
+      "alpha": null,
+      "log_scale_delta": null,
+      "correspondence_count": null,
+      "inlier_count": null,
+      "inlier_ratio": null,
+      "spatial_coverage": null,
+      "median_residual_3d_m": null,
+      "p90_residual_3d_m": null,
+      "median_abs_residual_object_x_m": null,
+      "median_abs_residual_object_y_m": null,
+      "median_abs_residual_object_z_m": null,
+      "correction_accepted": null,
+      "rejection_reason": null
+    },
+    "proxy_scale_log_difference": -0.05223986590855266,
+    "proxy_scale_difference_percent": 5.362844174864434
+  },
+  "gt_error": {
+    "reference_path": {
+      "rotation_error_deg": 3.768024320002167,
+      "translation_error_cm": 4.95411292134569,
+      "translation_error_x_cm": 4.628646606579423,
+      "translation_error_y_cm": -1.707712933421135,
+      "translation_error_z_cm": 0.45009106397628784
+    },
+    "query_path": {
+      "rotation_error_deg": 4.167104607603921,
+      "translation_error_cm": 5.826810876116587,
+      "translation_error_x_cm": 5.768805975094438,
+      "translation_error_y_cm": -0.8168593049049377,
+      "translation_error_z_cm": 0.07309913635253906
+    },
+    "final": {
+      "rotation_error_deg": 4.167104607603921,
+      "translation_error_cm": 5.826810876116587,
+      "translation_error_x_cm": 5.768805975094438,
+      "translation_error_y_cm": -0.8168593049049377,
+      "translation_error_z_cm": 0.07309913635253906
+    }
+  },
+  "runtime": {
+    "total_time_sec": 246.2276753890037,
+    "visible_scale_time_sec": null,
+    "foundationpose_time_sec": 126.55693202099064,
+    "bufferx_time_sec": 0.0
+  },
+  "pose": {
+    "convention": "T_query_camera_from_reference_camera",
+    "translation_unit": "meter",
+    "archive": "poses/linemod_obj_09_self_cross__linemod_obj09_r000009_000000_i00_q000009_000003_i00__self_cross__ON__fc29dde5__2f21bf90.npz",
+    "reference_path_matrix": [
+      [
+        0.9940661191940308,
+        0.10816680639982224,
+        -0.011512541212141514,
+        0.03936218470335007
+      ],
+      [
+        -0.10592480003833771,
+        0.9866378903388977,
+        0.12379684299230576,
+        0.05781325325369835
+      ],
+      [
+        0.02474941313266754,
+        -0.12184273451566696,
+        0.992240846157074,
+        0.21662403643131256
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "query_path_matrix": [
+      [
+        0.9946669936180115,
+        0.10047755390405655,
+        -0.0232789795845747,
+        0.050763778388500214
+      ],
+      [
+        -0.09729711711406708,
+        0.988998293876648,
+        0.11142556369304657,
+        0.06672178953886032
+      ],
+      [
+        0.034218672662973404,
+        -0.10856632888317108,
+        0.9935001134872437,
+        0.21285411715507507
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "final_selected_matrix": [
+      [
+        0.9946669936180115,
+        0.10047755390405655,
+        -0.0232789795845747,
+        0.050763778388500214
+      ],
+      [
+        -0.09729711711406708,
+        0.988998293876648,
+        0.11142556369304657,
+        0.06672178953886032
+      ],
+      [
+        0.034218672662973404,
+        -0.10856632888317108,
+        0.9935001134872437,
+        0.21285411715507507
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "ground_truth_matrix": [
+      [
+        0.9941539168357849,
+        0.09655649214982986,
+        0.04831961914896965,
+        -0.006924281362444162
+      ],
+      [
+        -0.1009736955165863,
+        0.9899166226387024,
+        0.09934905916452408,
+        0.0748903825879097
+      ],
+      [
+        -0.03823965787887573,
+        -0.10364684462547302,
+        0.9938794374465942,
+        0.21212312579154968
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "extra": {
+    "final_loss": 0.10071501681930475,
+    "confidence_raw": 0.4912537187057465,
+    "bidirectional_consistency_score": 0.9196955127748904,
+    "mask_score": 0.8580637079132565,
+    "depth_score": 0.9360758211684964,
+    "source_validation_score": 0.9103608488197195,
+    "research_pair_results_csv": "/home/park/vm/code/outputs/duck_q3_self_cross_joint_topk_w1/research/pair_results.csv"
+  }
+}

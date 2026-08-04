@@ -21,6 +21,26 @@ class DGeDiRegistrationResult:
     metadata_path: Path
     reference_self_aligned_mesh_path: Path
     query_self_aligned_mesh_path: Path
+    reference_registration_cloud_path: Path
+    query_registration_cloud_path: Path
+
+
+class DGeDiSemanticFailure(RuntimeError):
+    """Registration lacks usable geometric evidence; infrastructure is OK."""
+
+
+def _worker_failure_error_type(
+    failure_text: str,
+) -> type[RuntimeError]:
+    """Separate geometric degeneracy from operational worker failures."""
+    semantic_markers = (
+        "fewer than 3 correspondences",
+        "Too few correspondences",
+        "Too few points",
+    )
+    if any(marker in failure_text for marker in semantic_markers):
+        return DGeDiSemanticFailure
+    return RuntimeError
 
 
 def _rigid(value: Any, name: str) -> np.ndarray:
@@ -62,6 +82,8 @@ def _rigid(value: Any, name: str) -> np.ndarray:
         )
 
     return matrix
+
+
 def _save_self_aligned_mesh(
     *,
     source_mesh_path: Path,
@@ -147,6 +169,350 @@ def _save_self_aligned_mesh(
 
     return output_mesh_path
 
+
+def _save_depth_consistent_proxy_surface_cloud(
+    *,
+    local_mesh_path: Path,
+    pose_camera_from_proxy: Any,
+    camera_matrix: Any,
+    observed_mask_bool: Any,
+    observed_depth_m: Any,
+    output_cloud_path: Path,
+    sample_count: int,
+    maximum_depth_residual_m: float = 0.010,
+    minimum_consistent_pixels: int = 256,
+) -> tuple[Path, Path]:
+    """Save final-proxy ray hits that agree with masked observed depth.
+
+    Visibility and depth consistency are evaluated in the camera frame, but
+    the saved points remain in the final proxy-local frame so dGeDi estimates
+    G=T_Pq_from_Pr and the existing H=B@G@inv(A) composition stays valid.
+    """
+    import open3d as o3d
+
+    source_path = Path(local_mesh_path).expanduser().resolve()
+    output_path = Path(output_cloud_path).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Final proxy mesh not found: {source_path}")
+    if sample_count < 256:
+        raise ValueError("sample_count must be at least 256")
+    if maximum_depth_residual_m <= 0.0:
+        raise ValueError("maximum_depth_residual_m must be positive")
+    if minimum_consistent_pixels < 256:
+        raise ValueError("minimum_consistent_pixels must be at least 256")
+
+    pose = _rigid(pose_camera_from_proxy, "camera-from-proxy pose")
+    intrinsic = np.asarray(camera_matrix, dtype=np.float64)
+    mask = np.asarray(observed_mask_bool, dtype=bool)
+    depth = np.asarray(observed_depth_m, dtype=np.float64)
+    if intrinsic.shape != (3, 3) or not np.all(np.isfinite(intrinsic)):
+        raise ValueError("camera_matrix must be a finite (3,3) matrix")
+    if depth.ndim != 2 or mask.shape != depth.shape:
+        raise ValueError("observed mask and depth must share shape (H,W)")
+    fx, fy = float(intrinsic[0, 0]), float(intrinsic[1, 1])
+    cx, cy = float(intrinsic[0, 2]), float(intrinsic[1, 2])
+    if fx <= 0.0 or fy <= 0.0:
+        raise ValueError("camera focal lengths must be positive")
+
+    mesh = o3d.io.read_triangle_mesh(
+        str(source_path),
+        enable_post_processing=True,
+    )
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    triangles = np.asarray(mesh.triangles, dtype=np.int64)
+    if len(vertices) == 0 or len(triangles) == 0:
+        raise ValueError(f"Final proxy mesh is empty: {source_path}")
+
+    # Raycasting is done after applying the final FoundationPose self pose.
+    # The source mesh itself remains untouched in its final S*/Sxyz local frame.
+    camera_mesh = o3d.geometry.TriangleMesh(mesh)
+    camera_vertices = (
+        vertices @ pose[:3, :3].T
+        + pose[:3, 3][None, :]
+    )
+    camera_mesh.vertices = o3d.utility.Vector3dVector(camera_vertices)
+
+    tensor_mesh = o3d.t.geometry.TriangleMesh.from_legacy(camera_mesh)
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(tensor_mesh)
+
+    valid_observation = mask & np.isfinite(depth) & (depth > 0.0)
+    pixel_v, pixel_u = np.nonzero(valid_observation)
+    valid_observed_pixel_count = int(len(pixel_u))
+    if valid_observed_pixel_count < minimum_consistent_pixels:
+        raise DGeDiSemanticFailure(
+            "Too few valid masked-depth pixels before proxy raycasting: "
+            f"{valid_observed_pixel_count} < {minimum_consistent_pixels}"
+        )
+
+    ray_direction = np.stack(
+        (
+            (pixel_u.astype(np.float64) - cx) / fx,
+            (pixel_v.astype(np.float64) - cy) / fy,
+            np.ones_like(pixel_u, dtype=np.float64),
+        ),
+        axis=-1,
+    )
+    rays = np.concatenate(
+        (np.zeros_like(ray_direction), ray_direction),
+        axis=-1,
+    ).astype(np.float32)
+    raycast = scene.cast_rays(
+        o3d.core.Tensor(rays, dtype=o3d.core.Dtype.Float32)
+    )
+    rendered_depth = raycast["t_hit"].numpy().astype(np.float64)
+    primitive_ids = raycast["primitive_ids"].numpy().astype(np.int64)
+    valid_hit = (
+        np.isfinite(rendered_depth)
+        & (rendered_depth > 0.0)
+        & (primitive_ids >= 0)
+        & (primitive_ids < len(triangles))
+    )
+    observed_depth = depth[pixel_v, pixel_u]
+    depth_residual = np.full(
+        rendered_depth.shape,
+        np.inf,
+        dtype=np.float64,
+    )
+    depth_residual[valid_hit] = np.abs(
+        rendered_depth[valid_hit] - observed_depth[valid_hit]
+    )
+    consistent = valid_hit & (
+        depth_residual <= float(maximum_depth_residual_m)
+    )
+    consistent_pixel_count = int(np.count_nonzero(consistent))
+    if consistent_pixel_count < minimum_consistent_pixels:
+        raise DGeDiSemanticFailure(
+            "Too few depth-consistent visible pixels: "
+            f"{consistent_pixel_count} < {minimum_consistent_pixels}"
+        )
+
+    # With direction_z=1, t_hit is camera Z rather than Euclidean ray range.
+    # Therefore these are the exact first surface hits corresponding to the
+    # rendered depth comparison above, not uniformly sampled triangle points.
+    camera_hit_points = (
+        ray_direction[consistent]
+        * rendered_depth[consistent, None]
+    )
+
+    # Row-vector inverse of p_camera = p_proxy @ R.T + t.
+    proxy_hit_points = (
+        camera_hit_points - pose[:3, 3][None, :]
+    ) @ pose[:3, :3]
+
+    registration_cloud = o3d.geometry.PointCloud()
+    registration_cloud.points = o3d.utility.Vector3dVector(proxy_hit_points)
+    registration_cloud = registration_cloud.remove_non_finite_points()
+    registration_cloud = registration_cloud.remove_duplicated_points()
+    unique_point_count = int(len(registration_cloud.points))
+    if unique_point_count > sample_count:
+        registration_cloud = registration_cloud.farthest_point_down_sample(
+            sample_count
+        )
+    registration_cloud = registration_cloud.remove_non_finite_points()
+    registration_cloud = registration_cloud.remove_duplicated_points()
+    saved_point_count = int(len(registration_cloud.points))
+    if saved_point_count < minimum_consistent_pixels:
+        raise DGeDiSemanticFailure(
+            "Depth-consistent proxy surface cloud contains too few unique "
+            f"points: {saved_point_count} < {minimum_consistent_pixels}"
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not o3d.io.write_point_cloud(
+        str(output_path),
+        registration_cloud,
+        write_ascii=False,
+        compressed=False,
+        print_progress=False,
+    ):
+        raise IOError(
+            "Failed to save depth-consistent proxy surface cloud: "
+            f"{output_path}"
+        )
+
+    finite_residuals = depth_residual[consistent]
+    saved_points = np.asarray(registration_cloud.points, dtype=np.float64)
+    diameter_m = _diameter(saved_points)
+    if not np.isfinite(diameter_m) or diameter_m <= 0.0:
+        raise ValueError(
+            "Depth-consistent proxy surface cloud has invalid diameter: "
+            f"{diameter_m}"
+        )
+
+    diagnostics_path = output_path.with_suffix(".json")
+    diagnostics_path.write_text(
+        json.dumps(
+            {
+                "point_source": (
+                    "final_proxy_first_ray_hits_consistent_with_"
+                    "observed_mask_and_depth"
+                ),
+                "source_final_proxy_mesh": str(source_path),
+                "registration_cloud": str(output_path),
+                "coordinate_frame": "proxy_local",
+                "visibility_frame": "camera",
+                "sample_count_requested": int(sample_count),
+                "sample_count_saved": saved_point_count,
+                "point_count_saved": saved_point_count,
+                "point_count_unique_before_downsample": unique_point_count,
+                "minimum_consistent_pixels": int(
+                    minimum_consistent_pixels
+                ),
+                "maximum_depth_residual_m": float(
+                    maximum_depth_residual_m
+                ),
+                "observed_mask_pixel_count": int(np.count_nonzero(mask)),
+                "valid_observed_depth_pixel_count": (
+                    valid_observed_pixel_count
+                ),
+                "rendered_first_hit_pixel_count": int(
+                    np.count_nonzero(valid_hit)
+                ),
+                "consistent_pixel_count": consistent_pixel_count,
+                "consistent_fraction_of_valid_observation": float(
+                    consistent_pixel_count
+                    / max(valid_observed_pixel_count, 1)
+                ),
+                "consistent_depth_residual_mean_m": float(
+                    np.mean(finite_residuals)
+                ),
+                "consistent_depth_residual_median_m": float(
+                    np.median(finite_residuals)
+                ),
+                "consistent_depth_residual_max_m": float(
+                    np.max(finite_residuals)
+                ),
+                "proxy_local_axis_extent_m": np.ptp(
+                    saved_points,
+                    axis=0,
+                ).tolist(),
+                "diameter_m": float(diameter_m),
+                "pose_camera_from_proxy": pose.tolist(),
+            },
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return output_path, diagnostics_path
+
+
+def _save_registration_cloud_pair_quality(
+    *,
+    reference_diagnostics_path: Path,
+    query_diagnostics_path: Path,
+    output_path: Path,
+    minimum_point_count_ratio: float = 0.10,
+    minimum_diameter_ratio: float = 0.10,
+) -> tuple[Path, dict[str, Any]]:
+    """Record gross input imbalance without stopping dGeDi registration.
+
+    This gate cannot establish actual cross-view surface overlap because G is
+    not known yet. It only catches degenerate point-count or physical-extent
+    imbalance; the existing render-based validator remains the overlap check.
+    """
+    if not 0.0 < minimum_point_count_ratio <= 1.0:
+        raise ValueError(
+            "minimum_point_count_ratio must be in (0,1]"
+        )
+    if not 0.0 < minimum_diameter_ratio <= 1.0:
+        raise ValueError(
+            "minimum_diameter_ratio must be in (0,1]"
+        )
+
+    reference_payload = json.loads(
+        Path(reference_diagnostics_path).read_text(
+            encoding="utf-8"
+        )
+    )
+    query_payload = json.loads(
+        Path(query_diagnostics_path).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    reference_point_count = int(
+        reference_payload["point_count_saved"]
+    )
+    query_point_count = int(
+        query_payload["point_count_saved"]
+    )
+    reference_diameter_m = float(
+        reference_payload["diameter_m"]
+    )
+    query_diameter_m = float(
+        query_payload["diameter_m"]
+    )
+
+    point_count_ratio = (
+        min(reference_point_count, query_point_count)
+        / max(reference_point_count, query_point_count)
+    )
+    diameter_ratio = (
+        min(reference_diameter_m, query_diameter_m)
+        / max(reference_diameter_m, query_diameter_m)
+    )
+
+    reasons: list[str] = []
+    if point_count_ratio < minimum_point_count_ratio:
+        reasons.append(
+            "point_count_ratio_below_threshold"
+        )
+    if diameter_ratio < minimum_diameter_ratio:
+        reasons.append(
+            "diameter_ratio_below_threshold"
+        )
+
+    diagnostics = {
+        "status": "EVALUATED",
+        "accepted": not reasons,
+        "meets_recommended_minimum": not reasons,
+        "reasons": reasons,
+        "policy": {
+            "minimum_point_count_ratio": float(
+                minimum_point_count_ratio
+            ),
+            "minimum_diameter_ratio": float(
+                minimum_diameter_ratio
+            ),
+        },
+        "metrics": {
+            "reference_point_count": int(reference_point_count),
+            "query_point_count": int(query_point_count),
+            "point_count_ratio": float(point_count_ratio),
+            "reference_diameter_m": float(
+                reference_diameter_m
+            ),
+            "query_diameter_m": float(query_diameter_m),
+            "diameter_ratio": float(diameter_ratio),
+        },
+        "reference_diagnostics_path": str(
+            Path(reference_diagnostics_path).expanduser().resolve()
+        ),
+        "query_diagnostics_path": str(
+            Path(query_diagnostics_path).expanduser().resolve()
+        ),
+    }
+
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(
+            diagnostics,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    return output_path, diagnostics
+
+
 def compose_dgedi_relative_pose(
     *,
     reference_pose_camera_from_proxy: Any,
@@ -194,14 +560,17 @@ def _mesh_to_cloud(
     )
 
     if len(vertices) == 0:
-        raise ValueError(
-            f"Mesh has no vertices: {path}"
+        cloud = o3d.io.read_point_cloud(
+            str(path),
+            remove_nan_points=True,
+            remove_infinite_points=True,
         )
+    else:
+        cloud = o3d.geometry.PointCloud()
+        cloud.points = o3d.utility.Vector3dVector(vertices)
 
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = (
-        o3d.utility.Vector3dVector(vertices)
-    )
+    if len(cloud.points) == 0:
+        raise ValueError(f"Geometry has no points: {path}")
 
     if len(cloud.points) > count:
         cloud = (
@@ -686,10 +1055,11 @@ def _worker(
         "status": "completed",
         "backend": "dgedi",
         "pose_convention": (
-            "T_query_proxy_from_reference_proxy"
+            "T_target_geometry_from_source_geometry"
         ),
-        "input_meshes": (
-            "metric local proxy meshes without camera pose baking"
+        "input_geometries": (
+            "depth-consistent final-proxy surface point clouds in "
+            "independent proxy-local frames"
         ),
         "translation_unit": "meter",
         "reference_mesh": (
@@ -761,12 +1131,22 @@ def run_dgedi_registration(
     config_path: Path,
     reference_self_alignment: Any,
     query_self_alignment: Any,
+    reference_camera_matrix: Any,
+    query_camera_matrix: Any,
+    reference_mask_bool: Any,
+    query_mask_bool: Any,
+    reference_depth_m: Any,
+    query_depth_m: Any,
     output_directory: Path,
     mode: str = "multi_scale",
     device: str = "cuda",
     sample_count: int = 30000,
     ransac_threshold: float = 0.03,
     icp_threshold: float = 0.03,
+    maximum_surface_depth_residual_m: float = 0.010,
+    minimum_visible_depth_pixels: int = 256,
+    minimum_pair_point_count_ratio: float = 0.10,
+    minimum_pair_diameter_ratio: float = 0.10,
 ) -> DGeDiRegistrationResult:
     repository = (
         Path(repository_path)
@@ -901,8 +1281,71 @@ def run_dgedi_registration(
         f"{query_mesh}"
     )
 
-    # dGeDi는 camera pose가 bake되지 않은 local proxy를 등록한다.
-    # 출력은 G=T_Pq_from_Pr이고, 아래에서 A/B와 합성한다.
+    surface_cloud_root = (
+        output / "depth_consistent_proxy_surface_clouds"
+    )
+    (
+        reference_registration_cloud,
+        reference_surface_diagnostics,
+    ) = _save_depth_consistent_proxy_surface_cloud(
+        local_mesh_path=raw_reference_mesh,
+        pose_camera_from_proxy=reference_self,
+        camera_matrix=reference_camera_matrix,
+        observed_mask_bool=reference_mask_bool,
+        observed_depth_m=reference_depth_m,
+        output_cloud_path=(
+            surface_cloud_root
+            / "reference_depth_consistent_proxy_surface_local.ply"
+        ),
+        sample_count=sample_count,
+        maximum_depth_residual_m=maximum_surface_depth_residual_m,
+        minimum_consistent_pixels=minimum_visible_depth_pixels,
+    )
+    (
+        query_registration_cloud,
+        query_surface_diagnostics,
+    ) = _save_depth_consistent_proxy_surface_cloud(
+        local_mesh_path=raw_query_mesh,
+        pose_camera_from_proxy=query_self,
+        camera_matrix=query_camera_matrix,
+        observed_mask_bool=query_mask_bool,
+        observed_depth_m=query_depth_m,
+        output_cloud_path=(
+            surface_cloud_root
+            / "query_depth_consistent_proxy_surface_local.ply"
+        ),
+        sample_count=sample_count,
+        maximum_depth_residual_m=maximum_surface_depth_residual_m,
+        minimum_consistent_pixels=minimum_visible_depth_pixels,
+    )
+    (
+        registration_cloud_pair_quality_path,
+        registration_cloud_pair_quality,
+    ) = _save_registration_cloud_pair_quality(
+        reference_diagnostics_path=(
+            reference_surface_diagnostics
+        ),
+        query_diagnostics_path=(
+            query_surface_diagnostics
+        ),
+        output_path=(
+            surface_cloud_root
+            / "pair_quality_gate.json"
+        ),
+        minimum_point_count_ratio=minimum_pair_point_count_ratio,
+        minimum_diameter_ratio=minimum_pair_diameter_ratio,
+    )
+    print(
+        "[dGeDi depth-consistent proxy-surface input] "
+        f"reference={reference_registration_cloud} "
+        f"query={query_registration_cloud} "
+        "pair_quality="
+        f"{registration_cloud_pair_quality['status']}"
+    )
+
+    # 최종 S*/Sxyz proxy에서 mask+depth와 일치한 first ray-hit만 등록한다.
+    # 점은 각 proxy-local frame에 있으므로 G=T_Pq_from_Pr이다.
+    # worker 출력은 G=T_Pq_from_Pr이고, 아래에서 H=B@G@inv(A)로 합성한다.
     command = [
         str(python_path),
         str(Path(__file__).resolve()),
@@ -912,9 +1355,9 @@ def run_dgedi_registration(
         "--config",
         str(config_path),
         "--reference-mesh",
-        str(raw_reference_mesh),
+        str(reference_registration_cloud),
         "--query-mesh",
-        str(raw_query_mesh),
+        str(query_registration_cloud),
         "--output-directory",
         str(output),
         "--mode",
@@ -951,7 +1394,9 @@ def run_dgedi_registration(
     )
 
     if completed.returncode != 0:
-        raise RuntimeError(
+        failure_text = f"{completed.stdout}\n{completed.stderr}"
+        error_type = _worker_failure_error_type(failure_text)
+        raise error_type(
             "dGeDi execution failed\n"
             f"command: {' '.join(command)}\n"
             f"stdout:\n{completed.stdout}\n"
@@ -1018,10 +1463,10 @@ def run_dgedi_registration(
     metadata.update(
         {
             "strategy": (
-                "local_proxy_dgedi_then_"
-                "foundationpose_pose_composition"
+                "depth_consistent_dual_proxy_surface_registration_"
+                "then_pose_composition"
             ),
-            "input_mesh_coordinate_frames": {
+            "input_geometry_coordinate_frames": {
                 "reference": "reference_proxy_local",
                 "query": "query_proxy_local",
             },
@@ -1037,19 +1482,48 @@ def run_dgedi_registration(
             "query_self_aligned_mesh": (
                 str(query_mesh)
             ),
+            "reference_registration_cloud": str(
+                reference_registration_cloud
+            ),
+            "query_registration_cloud": str(
+                query_registration_cloud
+            ),
+            "reference_surface_diagnostics": str(
+                reference_surface_diagnostics
+            ),
+            "query_surface_diagnostics": str(
+                query_surface_diagnostics
+            ),
+            "registration_cloud_pair_quality": str(
+                registration_cloud_pair_quality_path
+            ),
+            "registration_cloud_pair_quality_status": (
+                registration_cloud_pair_quality["status"]
+            ),
+            "minimum_visible_depth_pixels": (
+                minimum_visible_depth_pixels
+            ),
+            "maximum_surface_depth_residual_m": (
+                maximum_surface_depth_residual_m
+            ),
+            "minimum_pair_point_count_ratio": (
+                minimum_pair_point_count_ratio
+            ),
+            "minimum_pair_diameter_ratio": (
+                minimum_pair_diameter_ratio
+            ),
             "reference_pose_camera_from_proxy": (
                 reference_self.tolist()
             ),
             "query_pose_camera_from_proxy": (
                 query_self.tolist()
             ),
-            "proxy_pose_convention": (
-                "G=T_query_proxy_from_reference_proxy"
+            "composition": (
+                "H = B @ G @ inv(A), where A=T_Cr_from_Pr, "
+                "B=T_Cq_from_Pq, and G=T_Pq_from_Pr"
             ),
-            "proxy_pose_query_from_reference": (
-                proxy_pose.tolist()
-            ),
-            "composition": "H = B @ G @ inv(A)",
+            "proxy_pose_convention": "G=T_query_proxy_from_reference_proxy",
+            "proxy_pose_query_from_reference": proxy_pose.tolist(),
             "relative_pose_convention": (
                 "T_query_camera_from_"
                 "reference_camera"
@@ -1094,6 +1568,12 @@ def run_dgedi_registration(
         ),
         query_self_aligned_mesh_path=(
             query_mesh
+        ),
+        reference_registration_cloud_path=(
+            reference_registration_cloud
+        ),
+        query_registration_cloud_path=(
+            query_registration_cloud
         ),
     )
 

@@ -538,3 +538,4 @@ def select_best_self_alignment(
             best.alignment_score.total_loss
         ),
     )
+

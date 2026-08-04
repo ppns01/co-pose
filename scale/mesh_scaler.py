@@ -17,13 +17,15 @@ from scale.mesh_normalizer import MeshNormalizationResult
 @dataclass(frozen=True)
 class ScaledMeshCandidate:
     """
-    하나의 등방성 scale이 적용된 mesh 후보.
+    정규화 mesh에서 생성된 하나의 metric mesh 후보.
 
     좌표 관계:
-        p_scaled = scale_transform @ p_normalized
+        p_metric = scale_transform @ p_normalized
 
-    정규화 mesh의 robust diagonal이 1이므로,
-    scaled mesh의 robust diagonal은 scale_m에 대응한다.
+    scale_m은 정합 점수 정규화에 사용하는 object-scale 기준값이다.
+    등방성 후보에서는 robust metric diagonal에 대응한다. 이후 중심
+    기준 축별 scale을 적용한 후보는 기존 pair-shared S*를 유지하며,
+    실제 축별 치수는 해당 후보 metadata에 별도로 기록한다.
     """
 
     candidate_index: int

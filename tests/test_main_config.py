@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import io
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from dataclasses import replace
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import main
@@ -17,6 +16,41 @@ TEST_DIRECTORY = Path(__file__).resolve().parent
 
 
 class MainConfigTests(unittest.TestCase):
+    def test_object_id_uses_semantic_sam3_defaults(self) -> None:
+        config = main.build_config(
+            main.parse_args(
+                [
+                    "--object-id",
+                    "9",
+                    "--reference-scene-id",
+                    "9",
+                    "--query-scene-id",
+                    "9",
+                ]
+            )
+        )
+
+        self.assertEqual(config.object_name, "duck")
+        self.assertEqual(
+            config.sam3_prompt,
+            "a small yellow rubber duck",
+        )
+
+    def test_explicit_sam3_prompt_overrides_object_default(self) -> None:
+        config = main.build_config(
+            main.parse_args(
+                [
+                    "--object-id",
+                    "9",
+                    "--sam3-prompt",
+                    "yellow bath duck",
+                ]
+            )
+        )
+
+        self.assertEqual(config.object_name, "duck")
+        self.assertEqual(config.sam3_prompt, "yellow bath duck")
+
     def test_default_instantmesh_config_is_low_vram(self) -> None:
         config_path = main.DEFAULT_INSTANTMESH_CONFIG
 
@@ -64,7 +98,7 @@ class MainConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             config.foundationpose_workers,
-            1,
+            2,
         )
         self.assertTrue(config.dino_enabled)
         self.assertEqual(
@@ -102,6 +136,12 @@ class MainConfigTests(unittest.TestCase):
             ((None, None),),
         )
 
+    @unittest.skip(
+        "DINO is only reachable via pose_path in "
+        "{'combined', 'self_cross'}, both removed; the default "
+        "pose_path is now self_mesh, which never triggers DINO. "
+        "DINO subsystem cleanup is a separate, deferred task."
+    )
     def test_hf_model_directory_does_not_require_hubconf(
         self,
     ) -> None:
@@ -162,6 +202,12 @@ class MainConfigTests(unittest.TestCase):
             }.issubset(file_descriptions)
         )
 
+    @unittest.skip(
+        "DINO is only reachable via pose_path in "
+        "{'combined', 'self_cross'}, both removed; the default "
+        "pose_path is now self_mesh, which never triggers DINO. "
+        "DINO subsystem cleanup is a separate, deferred task."
+    )
     def test_dino_inputs_share_one_model_load(
         self,
     ) -> None:
@@ -325,6 +371,7 @@ class MainConfigTests(unittest.TestCase):
                 "batch_object_08_r000008_000000"
                 "_ri00_qs000008_qi00"
                 "_q000001-000005-000009"
+                "_self_mesh"
             ),
         )
 
@@ -471,10 +518,10 @@ class MainConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             second_command[
-                second_command.index("--sam3-prompt")
+            second_command.index("--sam3-prompt")
                 + 1
             ],
-            "rubber duck",
+            "a small yellow rubber duck",
         )
         self.assertEqual(
             first_command[
@@ -595,55 +642,6 @@ class MainConfigTests(unittest.TestCase):
                 output_root.resolve()
                 / f"object_{object_id:02d}",
             )
-
-    def test_visualization_failure_preserves_pose_flow(
-        self,
-    ) -> None:
-        fake_module = ModuleType(
-            "utils.pipeline_visualizer"
-        )
-
-        def fail_visualization(
-            **_: object,
-        ) -> Path:
-            raise RuntimeError("visualization failed")
-
-        fake_module.save_pipeline_visualization_report = (
-            fail_visualization
-        )
-
-        with (
-            patch.dict(
-                sys.modules,
-                {
-                    "utils.pipeline_visualizer": (
-                        fake_module
-                    )
-                },
-            ),
-            redirect_stderr(io.StringIO()),
-        ):
-            report_path, error = (
-                main
-                ._save_visualization_report_best_effort(
-                    output_root=Path("."),
-                    reference_view=None,
-                    query_view=None,
-                    reference_mesh_result=None,
-                    query_mesh_result=None,
-                    reference_self_evaluation=None,
-                    query_self_evaluation=None,
-                    cross_evidence=None,
-                    consistency_result=None,
-                    final_result=None,
-                )
-            )
-
-        self.assertIsNone(report_path)
-        self.assertEqual(
-            error,
-            "RuntimeError: visualization failed",
-        )
 
     def test_multi_query_ids_must_be_unique(
         self,

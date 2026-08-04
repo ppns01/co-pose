@@ -4,7 +4,3 @@ sam3:
 instantmesh:
   diffusion_steps: 30
   offline: true
-selection:
-  pair_weights:
-    path_evidence: 0.60
-    consistency: 0.40

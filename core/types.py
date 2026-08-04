@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
-from typing import Literal
+from typing import Any, Literal
 
 
 ViewName = Literal[
@@ -141,8 +141,12 @@ class SegmentationResult:
     score: float | None = None
     overlay_path: Path | None = None
     metadata_path: Path | None = None
+    source: str = "sam3"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError("Segmentation source must not be empty.")
+
         if self.mask_bool.ndim != 2:
             raise ValueError(
                 "mask_bool shape은 (H, W)이어야 합니다: "
@@ -434,3 +438,219 @@ class ScaleInitializationResult:
                     "Scale 후보는 유한한 양수여야 합니다: "
                     f"{scale_candidate}"
                 )
+
+
+@dataclass(frozen=True)
+class FrameSpec:
+    scene_id: int
+    image_id: int
+    instance_index: int = 0
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "scene_id",
+            "image_id",
+            "instance_index",
+        ):
+            value = getattr(
+                self,
+                field_name,
+            )
+
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{field_name} must be a non-negative integer: {value}"
+                )
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    source_config_path: Path
+    random_seed: int
+    pose_path: str
+    storage_results_only: bool
+    storage_keep_failed_intermediates: bool
+    resume: bool
+    linemod_all_object_ids: tuple[int, ...]
+    linemod_all_query_stride: int
+    linemod_all_maximum_queries_per_object: (
+        int | None
+    )
+    linemod_all_continue_on_error: bool
+    dataset_root: Path
+    split: str
+    object_id: int
+    object_name: str
+    sam3_prompt: str
+    sam3_repository: Path
+    sam3_checkpoint: Path
+    sam3_bpe: Path
+    sam3_device: str
+    sam3_use_amp: bool
+    sam3_confidence_threshold: float
+    reference: FrameSpec
+    query: FrameSpec
+    mask_type: str
+    gt_mask_fallback_on_sam3_failure: bool
+    instantmesh_repository: Path
+    instantmesh_python: Path
+    instantmesh_config: Path
+    instantmesh_offline: bool
+    instantmesh_diffusion_steps: int
+    instantmesh_view_count: int
+    instantmesh_model_scale: float
+    instantmesh_render_distance: float
+    instantmesh_use_rembg: bool
+    instantmesh_export_texture_map: bool
+    instantmesh_save_video: bool
+    foundationpose_repository: Path
+    foundationpose_debug: int
+    renderer_batch_size: int
+    renderer_maximum_texture_size: int
+    dino_enabled: bool
+    dinov3_repository: Path
+    dinov3_checkpoint: Path
+    dinov3_model: str
+    dinov3_target_long_side: int
+    dinov3_use_amp: bool
+    dinov3_save_dtype: str
+    dinov3_maximum_surface_points: int
+    dinov3_feature_chunk_size: int
+    output_root: Path
+    device: str
+    top_k: int
+    foundationpose_rotation_diversity_threshold_deg: float
+    refine_iterations: int
+    foundationpose_workers: int
+    batch_query_image_ids: tuple[int, ...] | None
+    normalization_quantile_low: float
+    normalization_quantile_high: float
+    normalization_sample_count: int
+    normalization_random_seed: int
+    normalization_tolerance: float
+    axis_scale_minimum_factor: float
+    axis_scale_maximum_factor: float
+    axis_scale_grid_step_count: int
+    axis_scale_penalty_weight: float
+    axis_scale_uncertainty_penalty_weight: float
+    axis_scale_minimum_loss_improvement_ratio: float
+    axis_scale_coarse_shortlist_count: int
+    axis_scale_fine_factor_radius: float
+    axis_scale_fine_grid_step_count: int
+    enable_shared_axis_scale_refinement: bool
+    scale_quantile_low: float
+    scale_quantile_high: float
+    scale_multipliers: tuple[float, ...]
+    scale_minimum_valid_points: int
+    scale_maximum_points: int | None
+    scale_minimum_depth_m: float
+    scale_maximum_depth_m: float | None
+    scale_save_point_cloud: bool
+    visible_scale_refinement_enabled: bool
+    visible_scale_refinement_reference_enabled: (
+        bool
+    )
+    visible_scale_refinement_query_enabled: bool
+    visible_scale_minimum_loss_improvement_ratio: float
+    visible_scale_policy: str
+    visible_scale_local_multipliers: tuple[
+        float, ...
+    ]
+    visible_scale_mask_erosion_kernel_size: int
+    visible_scale_minimum_correspondences: int
+    visible_scale_minimum_spatial_coverage: float
+    visible_scale_depth_absolute_tolerance_m: (
+        float
+    )
+    visible_scale_depth_relative_tolerance: float
+    visible_scale_irls_iterations: int
+    visible_scale_huber_delta_m: float
+    visible_scale_maximum_abs_log_correction: (
+        float
+    )
+    visible_scale_coverage_grid_size: int
+    dgedi_repository: Path
+    dgedi_python: Path
+    dgedi_config: Path
+    dgedi_mode: str
+    dgedi_device: str
+    dgedi_sample_count: int
+    dgedi_ransac_threshold: float
+    dgedi_icp_threshold: float
+    dgedi_maximum_surface_depth_residual_m: float
+    dgedi_minimum_visible_depth_pixels: int
+    dgedi_minimum_pair_point_count_ratio: float
+    dgedi_minimum_pair_diameter_ratio: float
+    dgedi_confidence_weight_correspondence: float
+    dgedi_confidence_weight_inlier: float
+    dgedi_confidence_weight_rmse: float
+    dgedi_confidence_weight_mask: float
+    dgedi_confidence_weight_depth: float
+    dgedi_confidence_weight_free_space: float
+    dgedi_confidence_target_correspondence_fraction: float
+    dgedi_confidence_good_inlier_fitness: float
+    dgedi_confidence_maximum_normalized_rmse: float
+    dgedi_confidence_maximum_normalized_depth_residual: float
+    dgedi_selection_rotation_penalty_weight: float
+    dgedi_selection_uncertainty_penalty_weight: float
+    dgedi_selection_deformation_penalty_weight: float
+    dgedi_selection_near_tie_margin: float
+    dgedi_validation_minimum_mask_iou: float
+    dgedi_validation_baseline_mask_iou_drop: float
+    dgedi_validation_maximum_depth_residual_normalized: float
+    dgedi_validation_baseline_depth_residual_margin: float
+    dgedi_validation_maximum_total_loss: float
+    dgedi_validation_baseline_total_loss_margin: (
+        float
+    )
+    alignment_weight_mask: float
+    alignment_weight_depth: float
+    alignment_weight_free_space: float
+    alignment_weight_boundary: float
+    alignment_depth_trim_quantile: float
+    alignment_minimum_depth_overlap_pixels: int
+    alignment_free_space_absolute_tolerance_m: (
+        float
+    )
+    alignment_free_space_relative_tolerance: float
+    dino_depth_absolute_tolerance_m: float
+    dino_depth_relative_tolerance: float
+    dino_minimum_matched_points: int
+    dino_minimum_coverage: float
+    dino_coverage_weight: float
+
+
+@dataclass(frozen=True)
+class GeneratedProxyState:
+    view_name: str
+    frame: FrameSpec
+    prepared_view: Any
+    mesh_result: Any
+    normalization_result: Any
+    scale_result: Any
+    candidates: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class AlignedProxyState:
+    generated: GeneratedProxyState
+    self_results: tuple[Any, ...]
+    self_evaluation: Any
+    self_alignment: Any
+    selected_candidate: Any
+
+
+@dataclass(frozen=True)
+class PairPipelineOutcome:
+    final_status: str
+    summary_path: Path
+    pose_path: Path | None
+    pose_accepted: bool
+    visualization_path: Path | None
+    visualization_error: str | None = None
+    research_summary_path: Path | None = None
+

@@ -15,6 +15,32 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
     ("experiment", "device"): "device",
     ("experiment", "output_root"): "output_root",
     ("experiment", "pose_path"): "pose_path",
+    (
+        "segmentation",
+        "gt_mask_fallback_on_sam3_failure",
+    ): "gt_mask_fallback_on_sam3_failure",
+    ("storage", "results_only"): "storage_results_only",
+    (
+        "storage",
+        "keep_failed_intermediates",
+    ): "storage_keep_failed_intermediates",
+    ("storage", "resume"): "resume",
+    (
+        "linemod_all",
+        "object_ids",
+    ): "linemod_all_object_ids",
+    (
+        "linemod_all",
+        "query_stride",
+    ): "linemod_all_query_stride",
+    (
+        "linemod_all",
+        "maximum_queries_per_object",
+    ): "linemod_all_maximum_queries_per_object",
+    (
+        "linemod_all",
+        "continue_on_error",
+    ): "linemod_all_continue_on_error",
     ("data", "dataset_root"): "dataset_root",
     ("data", "split"): "split",
     ("data", "object_id"): "object_id",
@@ -131,6 +157,10 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
     ("foundationpose", "top_k"): "top_k",
     (
         "foundationpose",
+        "rotation_diversity_threshold_deg",
+    ): "foundationpose_rotation_diversity_threshold_deg",
+    (
+        "foundationpose",
         "refine_iterations",
     ): "refine_iterations",
     (
@@ -151,30 +181,6 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
         "renderer",
         "maximum_texture_size",
     ): "renderer_maximum_texture_size",
-    (
-        "bufferx",
-        "enabled",
-    ): "bufferx_enabled",
-    (
-        "bufferx",
-        "repository",
-    ): "bufferx_repository",
-    (
-        "bufferx",
-        "python",
-    ): "bufferx_python",
-    (
-        "bufferx",
-        "pose_estimator",
-    ): "bufferx_pose_estimator",
-    (
-        "bufferx",
-        "sample_count",
-    ): "bufferx_sample_count",
-    (
-        "bufferx",
-        "icp_refine",
-    ): "bufferx_icp_refine",
     (
         "scale",
         "normalization",
@@ -200,6 +206,56 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
         "normalization",
         "tolerance",
     ): "normalization_tolerance",
+    (
+        "scale",
+        "axis_refinement",
+        "minimum_factor",
+    ): "axis_scale_minimum_factor",
+    (
+        "scale",
+        "axis_refinement",
+        "maximum_factor",
+    ): "axis_scale_maximum_factor",
+    (
+        "scale",
+        "axis_refinement",
+        "grid_step_count",
+    ): "axis_scale_grid_step_count",
+    (
+        "scale",
+        "axis_refinement",
+        "scale_penalty_weight",
+    ): "axis_scale_penalty_weight",
+    (
+        "scale",
+        "axis_refinement",
+        "uncertainty_scale_penalty_weight",
+    ): "axis_scale_uncertainty_penalty_weight",
+    (
+        "scale",
+        "axis_refinement",
+        "minimum_loss_improvement_ratio",
+    ): "axis_scale_minimum_loss_improvement_ratio",
+    (
+        "scale",
+        "axis_refinement",
+        "coarse_shortlist_count",
+    ): "axis_scale_coarse_shortlist_count",
+    (
+        "scale",
+        "axis_refinement",
+        "fine_factor_radius",
+    ): "axis_scale_fine_factor_radius",
+    (
+        "scale",
+        "axis_refinement",
+        "fine_grid_step_count",
+    ): "axis_scale_fine_grid_step_count",
+    (
+        "scale",
+        "shared_axis_refinement",
+        "enabled",
+    ): "enable_shared_axis_scale_refinement",
     (
         "scale",
         "depth",
@@ -261,6 +317,197 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
         "minimum_loss_improvement_ratio",
     ): "visible_scale_minimum_loss_improvement_ratio",
     (
+        "scale",
+        "visible_refinement",
+        "policy",
+    ): "visible_scale_policy",
+    (
+        "scale",
+        "visible_refinement",
+        "local_scale_multipliers",
+    ): "visible_scale_local_multipliers",
+    (
+        "scale",
+        "visible_refinement",
+        "mask_erosion_kernel_size",
+    ): "visible_scale_mask_erosion_kernel_size",
+    (
+        "scale",
+        "visible_refinement",
+        "minimum_correspondences",
+    ): "visible_scale_minimum_correspondences",
+    (
+        "scale",
+        "visible_refinement",
+        "minimum_spatial_coverage",
+    ): "visible_scale_minimum_spatial_coverage",
+    (
+        "scale",
+        "visible_refinement",
+        "depth_absolute_tolerance_m",
+    ): "visible_scale_depth_absolute_tolerance_m",
+    (
+        "scale",
+        "visible_refinement",
+        "depth_relative_tolerance",
+    ): "visible_scale_depth_relative_tolerance",
+    (
+        "scale",
+        "visible_refinement",
+        "irls_iterations",
+    ): "visible_scale_irls_iterations",
+    (
+        "scale",
+        "visible_refinement",
+        "huber_delta_m",
+    ): "visible_scale_huber_delta_m",
+    (
+        "scale",
+        "visible_refinement",
+        "maximum_abs_log_correction",
+    ): "visible_scale_maximum_abs_log_correction",
+    (
+        "scale",
+        "visible_refinement",
+        "coverage_grid_size",
+    ): "visible_scale_coverage_grid_size",
+    ("dgedi", "repository"): "dgedi_repository",
+    ("dgedi", "python"): "dgedi_python",
+    ("dgedi", "config"): "dgedi_config",
+    ("dgedi", "mode"): "dgedi_mode",
+    ("dgedi", "device"): "dgedi_device",
+    ("dgedi", "sample_count"): "dgedi_sample_count",
+    (
+        "dgedi",
+        "ransac_threshold",
+    ): "dgedi_ransac_threshold",
+    (
+        "dgedi",
+        "icp_threshold",
+    ): "dgedi_icp_threshold",
+    (
+        "dgedi",
+        "maximum_surface_depth_residual_m",
+    ): "dgedi_maximum_surface_depth_residual_m",
+    (
+        "dgedi",
+        "minimum_visible_depth_pixels",
+    ): "dgedi_minimum_visible_depth_pixels",
+    (
+        "dgedi",
+        "minimum_pair_point_count_ratio",
+    ): "dgedi_minimum_pair_point_count_ratio",
+    (
+        "dgedi",
+        "minimum_pair_diameter_ratio",
+    ): "dgedi_minimum_pair_diameter_ratio",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "correspondence",
+    ): "dgedi_confidence_weight_correspondence",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "inlier",
+    ): "dgedi_confidence_weight_inlier",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "rmse",
+    ): "dgedi_confidence_weight_rmse",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "mask",
+    ): "dgedi_confidence_weight_mask",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "depth",
+    ): "dgedi_confidence_weight_depth",
+    (
+        "dgedi",
+        "confidence",
+        "weights",
+        "free_space",
+    ): "dgedi_confidence_weight_free_space",
+    (
+        "dgedi",
+        "confidence",
+        "target_correspondence_fraction",
+    ): "dgedi_confidence_target_correspondence_fraction",
+    (
+        "dgedi",
+        "confidence",
+        "good_inlier_fitness",
+    ): "dgedi_confidence_good_inlier_fitness",
+    (
+        "dgedi",
+        "confidence",
+        "maximum_normalized_rmse",
+    ): "dgedi_confidence_maximum_normalized_rmse",
+    (
+        "dgedi",
+        "confidence",
+        "maximum_normalized_depth_residual",
+    ): "dgedi_confidence_maximum_normalized_depth_residual",
+    (
+        "dgedi",
+        "final_selection",
+        "rotation_penalty_weight",
+    ): "dgedi_selection_rotation_penalty_weight",
+    (
+        "dgedi",
+        "final_selection",
+        "uncertainty_penalty_weight",
+    ): "dgedi_selection_uncertainty_penalty_weight",
+    (
+        "dgedi",
+        "final_selection",
+        "deformation_penalty_weight",
+    ): "dgedi_selection_deformation_penalty_weight",
+    (
+        "dgedi",
+        "final_selection",
+        "near_tie_margin",
+    ): "dgedi_selection_near_tie_margin",
+    (
+        "dgedi",
+        "observation_validation",
+        "minimum_mask_iou",
+    ): "dgedi_validation_minimum_mask_iou",
+    (
+        "dgedi",
+        "observation_validation",
+        "baseline_mask_iou_drop",
+    ): "dgedi_validation_baseline_mask_iou_drop",
+    (
+        "dgedi",
+        "observation_validation",
+        "maximum_depth_residual_normalized",
+    ): "dgedi_validation_maximum_depth_residual_normalized",
+    (
+        "dgedi",
+        "observation_validation",
+        "baseline_depth_residual_margin",
+    ): "dgedi_validation_baseline_depth_residual_margin",
+    (
+        "dgedi",
+        "observation_validation",
+        "maximum_total_loss",
+    ): "dgedi_validation_maximum_total_loss",
+    (
+        "dgedi",
+        "observation_validation",
+        "baseline_total_loss_margin",
+    ): "dgedi_validation_baseline_total_loss_margin",
+    (
         "alignment",
         "weights",
         "mask",
@@ -321,62 +568,6 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
         "dino",
         "coverage_weight",
     ): "dino_coverage_weight",
-    (
-        "consistency",
-        "weights",
-        "rotation",
-    ): "consistency_weight_rotation",
-    (
-        "consistency",
-        "weights",
-        "translation",
-    ): "consistency_weight_translation",
-    (
-        "consistency",
-        "weights",
-        "scale",
-    ): "consistency_weight_scale",
-    (
-        "consistency",
-        "rotation_threshold_deg",
-    ): "consistency_rotation_threshold_deg",
-    (
-        "consistency",
-        "translation_threshold_ratio",
-    ): "consistency_translation_threshold_ratio",
-    (
-        "consistency",
-        "maximum_scale_log_difference",
-    ): "consistency_maximum_scale_log_difference",
-    (
-        "consistency",
-        "translation_normalizer_m",
-    ): "consistency_translation_normalizer_m",
-    (
-        "selection",
-        "candidate_weights",
-        "self_alignment",
-    ): "selection_weight_self_alignment",
-    (
-        "selection",
-        "candidate_weights",
-        "cross_alignment",
-    ): "selection_weight_cross_alignment",
-    (
-        "selection",
-        "candidate_weights",
-        "dino",
-    ): "selection_weight_dino",
-    (
-        "selection",
-        "pair_weights",
-        "path_evidence",
-    ): "selection_weight_path_evidence",
-    (
-        "selection",
-        "pair_weights",
-        "consistency",
-    ): "selection_weight_consistency",
 }
 
 
@@ -392,15 +583,16 @@ PATH_FIELDS = {
     "dinov3_repository",
     "dinov3_checkpoint",
     "foundationpose_repository",
-    "bufferx_repository",
-    "bufferx_python",
+    "dgedi_repository",
+    "dgedi_python",
+    "dgedi_config",
 }
 
 OPTIONAL_PATH_FIELDS = {
     "output_root",
     "instantmesh_python",
     "dinov3_checkpoint",
-    "bufferx_python",
+    "dgedi_python",
 }
 
 INTEGER_FIELDS = {
@@ -423,27 +615,45 @@ INTEGER_FIELDS = {
     "foundationpose_debug",
     "renderer_batch_size",
     "renderer_maximum_texture_size",
-    "bufferx_sample_count",
     "normalization_sample_count",
     "normalization_random_seed",
+    "axis_scale_grid_step_count",
+    "axis_scale_coarse_shortlist_count",
+    "axis_scale_fine_grid_step_count",
     "scale_minimum_valid_points",
     "scale_maximum_points",
     "alignment_minimum_depth_overlap_pixels",
     "dino_minimum_matched_points",
+    "linemod_all_query_stride",
+    "linemod_all_maximum_queries_per_object",
+    "visible_scale_mask_erosion_kernel_size",
+    "visible_scale_minimum_correspondences",
+    "visible_scale_irls_iterations",
+    "visible_scale_coverage_grid_size",
+    "dgedi_sample_count",
+    "dgedi_minimum_visible_depth_pixels",
 }
 
 OPTIONAL_INTEGER_FIELDS = {
     "query_image_id",
     "scale_maximum_points",
+    "linemod_all_maximum_queries_per_object",
 }
 
 FLOAT_FIELDS = {
     "sam3_confidence_threshold",
     "instantmesh_model_scale",
     "instantmesh_render_distance",
+    "foundationpose_rotation_diversity_threshold_deg",
     "normalization_quantile_low",
     "normalization_quantile_high",
     "normalization_tolerance",
+    "axis_scale_minimum_factor",
+    "axis_scale_maximum_factor",
+    "axis_scale_penalty_weight",
+    "axis_scale_uncertainty_penalty_weight",
+    "axis_scale_minimum_loss_improvement_ratio",
+    "axis_scale_fine_factor_radius",
     "scale_quantile_low",
     "scale_quantile_high",
     "scale_minimum_depth_m",
@@ -459,28 +669,45 @@ FLOAT_FIELDS = {
     "dino_depth_relative_tolerance",
     "dino_minimum_coverage",
     "dino_coverage_weight",
-    "consistency_weight_rotation",
-    "consistency_weight_translation",
-    "consistency_weight_scale",
-    "consistency_rotation_threshold_deg",
-    "consistency_translation_threshold_ratio",
-    "consistency_maximum_scale_log_difference",
-    "consistency_translation_normalizer_m",
-    "selection_weight_self_alignment",
-    "selection_weight_cross_alignment",
-    "selection_weight_dino",
-    "selection_weight_path_evidence",
-    "selection_weight_consistency",
     "visible_scale_minimum_loss_improvement_ratio",
+    "visible_scale_minimum_spatial_coverage",
+    "visible_scale_depth_absolute_tolerance_m",
+    "visible_scale_depth_relative_tolerance",
+    "visible_scale_huber_delta_m",
+    "visible_scale_maximum_abs_log_correction",
+    "dgedi_ransac_threshold",
+    "dgedi_icp_threshold",
+    "dgedi_maximum_surface_depth_residual_m",
+    "dgedi_minimum_pair_point_count_ratio",
+    "dgedi_minimum_pair_diameter_ratio",
+    "dgedi_confidence_weight_correspondence",
+    "dgedi_confidence_weight_inlier",
+    "dgedi_confidence_weight_rmse",
+    "dgedi_confidence_weight_mask",
+    "dgedi_confidence_weight_depth",
+    "dgedi_confidence_weight_free_space",
+    "dgedi_confidence_target_correspondence_fraction",
+    "dgedi_confidence_good_inlier_fitness",
+    "dgedi_confidence_maximum_normalized_rmse",
+    "dgedi_confidence_maximum_normalized_depth_residual",
+    "dgedi_selection_rotation_penalty_weight",
+    "dgedi_selection_uncertainty_penalty_weight",
+    "dgedi_selection_deformation_penalty_weight",
+    "dgedi_selection_near_tie_margin",
+    "dgedi_validation_minimum_mask_iou",
+    "dgedi_validation_baseline_mask_iou_drop",
+    "dgedi_validation_maximum_depth_residual_normalized",
+    "dgedi_validation_baseline_depth_residual_margin",
+    "dgedi_validation_maximum_total_loss",
+    "dgedi_validation_baseline_total_loss_margin",
 }
 
 OPTIONAL_FLOAT_FIELDS = {
     "scale_maximum_depth_m",
-    "consistency_maximum_scale_log_difference",
-    "consistency_translation_normalizer_m",
 }
 
 BOOLEAN_FIELDS = {
+    "gt_mask_fallback_on_sam3_failure",
     "sam3_use_amp",
     "instantmesh_offline",
     "instantmesh_use_rembg",
@@ -492,8 +719,11 @@ BOOLEAN_FIELDS = {
     "visible_scale_refinement_enabled",
     "visible_scale_refinement_reference_enabled",
     "visible_scale_refinement_query_enabled",
-    "bufferx_enabled",
-    "bufferx_icp_refine",
+    "enable_shared_axis_scale_refinement",
+    "storage_results_only",
+    "storage_keep_failed_intermediates",
+    "resume",
+    "linemod_all_continue_on_error",
 }
 
 STRING_FIELDS = {
@@ -506,7 +736,9 @@ STRING_FIELDS = {
     "sam3_device",
     "dinov3_model",
     "dinov3_save_dtype",
-    "bufferx_pose_estimator",
+    "visible_scale_policy",
+    "dgedi_mode",
+    "dgedi_device",
 }
 
 OPTIONAL_STRING_FIELDS = {
@@ -516,6 +748,8 @@ OPTIONAL_STRING_FIELDS = {
 SEQUENCE_FIELDS = {
     "query_image_ids",
     "scale_multipliers",
+    "visible_scale_local_multipliers",
+    "linemod_all_object_ids",
 }
 
 OPTIONAL_SEQUENCE_FIELDS = {
@@ -603,11 +837,7 @@ def _normalize_value(
             return None
 
         if (
-            destination
-            in {
-                "instantmesh_python",
-                "bufferx_python",
-            }
+            destination in {"instantmesh_python", "dgedi_python"}
             and isinstance(value, str)
             and value.strip().lower() == "auto"
         ):
@@ -690,7 +920,10 @@ def _normalize_value(
                 f"{destination} must be a sequence: {value!r}"
             )
 
-        if destination == "query_image_ids":
+        if destination in {
+            "query_image_ids",
+            "linemod_all_object_ids",
+        }:
             return tuple(
                 _require_int(
                     item,

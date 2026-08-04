@@ -5,11 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 
-POSE_PATHS = (
-    "self_mesh",
-    "self_cross",
-    "cross_mesh",
-)
+POSE_PATHS = ("self_mesh",)
 
 
 def run_pose_path_entrypoint(

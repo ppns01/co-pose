@@ -82,6 +82,8 @@ def load_existing_segmentation(
     view: LoadedView,
     mask_path: str | Path,
     output_directory: str | Path,
+    source: str = "existing_mask",
+    fallback_reason: str | None = None,
 ) -> SegmentationResult:
     """
     기존 BOP/LINEMOD mask를 공통 segmentation 계약으로 변환한다.
@@ -89,6 +91,10 @@ def load_existing_segmentation(
     원본 mask는 수정하지 않고, 파이프라인이 재사용할 Boolean NPY와
     3채널 0/255 RGB mask를 별도 출력 폴더에 저장한다.
     """
+
+    normalized_source = str(source).strip()
+    if not normalized_source:
+        raise ValueError("Segmentation source must not be empty.")
 
     resolved_mask_path = (
         Path(mask_path)
@@ -168,7 +174,8 @@ def load_existing_segmentation(
     ).save(mask_rgb_path)
 
     metadata = {
-        "source": "existing_mask",
+        "source": normalized_source,
+        "fallback_reason": fallback_reason,
         "view_name": view.source.name,
         "source_mask_path": str(
             resolved_mask_path
@@ -205,6 +212,7 @@ def load_existing_segmentation(
         score=None,
         overlay_path=None,
         metadata_path=metadata_path,
+        source=normalized_source,
     )
 
 

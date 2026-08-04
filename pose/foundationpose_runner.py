@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import importlib
 import json
+import math
 import os
 import sys
 from contextlib import contextmanager
@@ -42,12 +43,16 @@ class FoundationPoseHypothesis:
     rank: int
     score: float
     pose_cam_from_proxy: NDArray[np.float32]
+    source_score_rank: int | None = None
 
     def __post_init__(self) -> None:
         if self.rank < 0:
             raise ValueError(
                 f"rank는 0 이상이어야 합니다: {self.rank}"
             )
+
+        if self.source_score_rank is not None and self.source_score_rank < 0:
+            raise ValueError("source_score_rank must be non-negative or None")
 
         if not np.isfinite(self.score):
             raise ValueError(
@@ -362,6 +367,7 @@ class FoundationPoseRunner:
         output_root: Path,
         *,
         top_k: int = 3,
+        rotation_diversity_threshold_deg: float = 0.0,
         refine_iterations: int = 5,
         debug: int = 0,
         device: str = "cuda:0",
@@ -384,6 +390,14 @@ class FoundationPoseRunner:
         ):
             raise ValueError(
                 f"top_k는 1 이상이어야 합니다: {top_k}"
+            )
+
+        if (
+            not np.isfinite(rotation_diversity_threshold_deg)
+            or not 0.0 <= rotation_diversity_threshold_deg <= 180.0
+        ):
+            raise ValueError(
+                "rotation_diversity_threshold_deg must be in [0, 180]"
             )
 
         if (
@@ -410,6 +424,9 @@ class FoundationPoseRunner:
             )
 
         self._top_k = int(top_k)
+        self._rotation_diversity_threshold_deg = float(
+            rotation_diversity_threshold_deg
+        )
         self._refine_iterations = int(
             refine_iterations
         )
@@ -1021,6 +1038,7 @@ class FoundationPoseRunner:
                     pose_cam_from_proxy=(
                         best_pose
                     ),
+                    source_score_rank=0,
                 ),
             )
 
@@ -1123,19 +1141,452 @@ class FoundationPoseRunner:
             reverse=True,
         )
 
-        selected_items = sorted_items[
-            : self._top_k
-        ]
+        selected_items: list[tuple[float, NDArray[np.float32]]] = []
+        selected_score_ranks: list[int] = []
+        threshold_rad = math.radians(
+            self._rotation_diversity_threshold_deg
+        )
+        for score_rank, item in enumerate(sorted_items):
+            if len(selected_items) >= self._top_k:
+                break
+            rotation = np.asarray(item[1][:3, :3], dtype=np.float64)
+            is_diverse = all(
+                math.acos(
+                    float(
+                        np.clip(
+                            (
+                                np.trace(
+                                    rotation
+                                    @ np.asarray(
+                                        selected_pose[:3, :3],
+                                        dtype=np.float64,
+                                    ).T
+                                )
+                                - 1.0
+                            )
+                            * 0.5,
+                            -1.0,
+                            1.0,
+                        )
+                    )
+                )
+                + 1e-12
+                >= threshold_rad
+                for _, selected_pose in selected_items
+            )
+            if is_diverse:
+                selected_items.append(item)
+                selected_score_ranks.append(score_rank)
+
+        if len(selected_items) < self._top_k:
+            selected_ids = {id(item) for item in selected_items}
+            for score_rank, item in enumerate(sorted_items):
+                if len(selected_items) >= self._top_k:
+                    break
+                if id(item) in selected_ids:
+                    continue
+                selected_items.append(item)
+                selected_score_ranks.append(score_rank)
+                selected_ids.add(id(item))
+
+        if self._rotation_diversity_threshold_deg > 0.0:
+            print(
+                "[FoundationPose rotation-diverse hypotheses] "
+                f"threshold_deg={self._rotation_diversity_threshold_deg:.3f} "
+                f"selected_score_ranks={selected_score_ranks}"
+            )
 
         return tuple(
             FoundationPoseHypothesis(
                 rank=rank,
                 score=float(score),
                 pose_cam_from_proxy=pose,
+                source_score_rank=selected_score_ranks[rank],
             )
             for rank, (score, pose)
             in enumerate(selected_items)
         )
+
+
+    def _save_all_register_hypotheses(
+        self,
+        *,
+        result_directory: Path,
+        view_name: ViewName,
+        candidate_index: int,
+        scale_m: float,
+        scaled_mesh_path: Path,
+        returned_best_pose: Any,
+        rgb: NDArray[np.uint8],
+        depth_m: NDArray[np.float32],
+        camera_matrix: NDArray[np.float64],
+        mask_uint8: NDArray[np.uint8],
+    ) -> Path | None:
+        """
+        register()에서 실제 refiner와 scorer를 통과한
+        전체 sorted hypothesis를 저장한다.
+
+        self.poses:
+            T_camera_from_centered_proxy.
+            FoundationPose score 내림차순으로 정렬된 상태.
+
+        poses_external:
+            T_camera_from_original_proxy.
+        """
+        if self._estimator is None:
+            raise RuntimeError(
+                "FoundationPose estimator가 없습니다."
+            )
+
+        raw_poses = getattr(
+            self._estimator,
+            "poses",
+            None,
+        )
+
+        raw_scores = getattr(
+            self._estimator,
+            "scores",
+            None,
+        )
+
+        if (
+            raw_poses is None
+            or raw_scores is None
+        ):
+            print(
+                "[FoundationPose all hypotheses] "
+                f"view={view_name} "
+                f"candidate={candidate_index:02d} "
+                "poses/scores unavailable"
+            )
+            return None
+
+        poses_centered = np.asarray(
+            _to_numpy(raw_poses),
+            dtype=np.float64,
+        )
+
+        scores = np.asarray(
+            _to_numpy(raw_scores),
+            dtype=np.float64,
+        ).reshape(-1)
+
+        if (
+            poses_centered.ndim != 3
+            or poses_centered.shape[1:]
+            != (4, 4)
+        ):
+            raise ValueError(
+                "FoundationPose 전체 pose shape이 "
+                "올바르지 않습니다: "
+                f"{poses_centered.shape}"
+            )
+
+        if scores.shape != (
+            poses_centered.shape[0],
+        ):
+            raise ValueError(
+                "FoundationPose pose와 score 개수가 "
+                "다릅니다: "
+                f"poses={poses_centered.shape[0]}, "
+                f"scores={scores.shape}"
+            )
+
+        if not np.isfinite(scores).all():
+            raise ValueError(
+                "FoundationPose score에 "
+                "NaN 또는 Inf가 있습니다."
+            )
+
+        tf_to_centered_mesh = np.asarray(
+            _to_numpy(
+                self._estimator
+                .get_tf_to_centered_mesh()
+            ),
+            dtype=np.float64,
+        )
+
+        if (
+            tf_to_centered_mesh.shape
+            != (4, 4)
+        ):
+            raise ValueError(
+                "tf_to_centered_mesh shape이 "
+                "올바르지 않습니다: "
+                f"{tf_to_centered_mesh.shape}"
+            )
+
+        poses_external_raw = (
+            poses_centered
+            @ tf_to_centered_mesh[
+                None,
+                :,
+                :,
+            ]
+        )
+
+        poses_external = np.full(
+            poses_external_raw.shape,
+            np.nan,
+            dtype=np.float64,
+        )
+
+        valid_pose_mask = np.zeros(
+            poses_external_raw.shape[0],
+            dtype=np.bool_,
+        )
+
+        for pose_index in range(
+            poses_external_raw.shape[0]
+        ):
+            try:
+                cleaned_pose = (
+                    _sanitize_rigid_pose(
+                        poses_external_raw[
+                            pose_index
+                        ],
+                        (
+                            "all_pose_camera_"
+                            "from_proxy"
+                            f"[{pose_index}]"
+                        ),
+                    )
+                )
+
+            except ValueError:
+                continue
+
+            poses_external[
+                pose_index
+            ] = cleaned_pose.astype(
+                np.float64,
+                copy=False,
+            )
+
+            valid_pose_mask[
+                pose_index
+            ] = True
+
+        if not valid_pose_mask.any():
+            raise RuntimeError(
+                "유효한 FoundationPose 전체 "
+                "hypothesis가 없습니다."
+            )
+
+        returned_pose = (
+            _sanitize_rigid_pose(
+                returned_best_pose,
+                "returned_best_pose",
+            )
+            .astype(
+                np.float64,
+                copy=False,
+            )
+        )
+
+        match_errors = np.full(
+            poses_external.shape[0],
+            np.inf,
+            dtype=np.float64,
+        )
+
+        match_errors[
+            valid_pose_mask
+        ] = np.max(
+            np.abs(
+                poses_external[
+                    valid_pose_mask
+                ]
+                - returned_pose[
+                    None,
+                    :,
+                    :,
+                ]
+            ),
+            axis=(1, 2),
+        )
+
+        returned_pose_match_rank = int(
+            np.argmin(match_errors)
+        )
+
+        returned_pose_match_error = float(
+            match_errors[
+                returned_pose_match_rank
+            ]
+        )
+
+        scores_are_descending = bool(
+            scores.size <= 1
+            or np.all(
+                scores[:-1]
+                >= scores[1:] - 1e-8
+            )
+        )
+
+        best_id_raw = getattr(
+            self._estimator,
+            "best_id",
+            None,
+        )
+
+        original_unsorted_best_id: (
+            int | None
+        ) = None
+
+        if best_id_raw is not None:
+            best_id_array = np.asarray(
+                _to_numpy(best_id_raw)
+            ).reshape(-1)
+
+            if best_id_array.size > 0:
+                original_unsorted_best_id = int(
+                    best_id_array[0]
+                )
+
+        result_directory.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        snapshot_path = (
+            result_directory
+            / "foundationpose_all_hypotheses.npz"
+        )
+
+        metadata_path = (
+            result_directory
+            / "foundationpose_all_hypotheses.json"
+        )
+
+        np.savez(
+            snapshot_path,
+            poses_centered=(
+                poses_centered.astype(
+                    np.float32
+                )
+            ),
+            poses_external=(
+                poses_external.astype(
+                    np.float32
+                )
+            ),
+            valid_pose_mask=(
+                valid_pose_mask
+            ),
+            foundationpose_scores=(
+                scores.astype(
+                    np.float32
+                )
+            ),
+            tf_to_centered_mesh=(
+                tf_to_centered_mesh.astype(
+                    np.float32
+                )
+            ),
+            returned_best_pose=(
+                returned_pose.astype(
+                    np.float32
+                )
+            ),
+            camera_matrix=(
+                np.asarray(
+                    camera_matrix,
+                    dtype=np.float32,
+                )
+            ),
+            observed_rgb=(
+                np.asarray(
+                    rgb,
+                    dtype=np.uint8,
+                )
+            ),
+            observed_depth_m=(
+                np.asarray(
+                    depth_m,
+                    dtype=np.float32,
+                )
+            ),
+            observed_mask=(
+                np.asarray(
+                    mask_uint8 > 0,
+                    dtype=np.bool_,
+                )
+            ),
+        )
+
+        metadata: dict[str, object] = {
+            "view_name": view_name,
+            "candidate_index": int(
+                candidate_index
+            ),
+            "scale_m": float(scale_m),
+            "scaled_mesh_path": str(
+                Path(scaled_mesh_path)
+                .expanduser()
+                .resolve()
+            ),
+            "pose_convention_centered": (
+                "T_camera_from_centered_proxy"
+            ),
+            "pose_convention_external": (
+                "T_camera_from_original_proxy"
+            ),
+            "translation_unit": "meter",
+            "candidate_count": int(
+                poses_centered.shape[0]
+            ),
+            "valid_candidate_count": int(
+                np.count_nonzero(
+                    valid_pose_mask
+                )
+            ),
+            "scores_are_descending": (
+                scores_are_descending
+            ),
+            "selected_sorted_rank": 0,
+            "original_unsorted_best_id": (
+                original_unsorted_best_id
+            ),
+            "returned_pose_match_rank": (
+                returned_pose_match_rank
+            ),
+            "returned_pose_match_error_max_abs": (
+                returned_pose_match_error
+            ),
+            "snapshot_path": str(
+                snapshot_path
+            ),
+        }
+
+        with metadata_path.open(
+            mode="w",
+            encoding="utf-8",
+        ) as file:
+            json.dump(
+                metadata,
+                file,
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        print(
+            "[FoundationPose all hypotheses] "
+            f"view={view_name} "
+            f"candidate={candidate_index:02d} "
+            f"count={poses_centered.shape[0]} "
+            f"valid="
+            f"{np.count_nonzero(valid_pose_mask)} "
+            f"sorted={scores_are_descending} "
+            f"returned_match_rank="
+            f"{returned_pose_match_rank} "
+            f"match_error="
+            f"{returned_pose_match_error:.3e} "
+            f"path={snapshot_path}"
+        )
+
+        return metadata_path
 
     @staticmethod
     def _save_result(
@@ -1148,6 +1599,7 @@ class FoundationPoseRunner:
             ...
         ],
         refine_iterations: int,
+        rotation_diversity_threshold_deg: float,
     ) -> Path:
         """FoundationPose top-K 결과를 저장한다."""
 
@@ -1224,6 +1676,7 @@ class FoundationPoseRunner:
             hypothesis_metadata.append(
                 {
                     "rank": hypothesis.rank,
+                    "source_score_rank": hypothesis.source_score_rank,
                     "score": hypothesis.score,
                     "pose_path": str(
                         pose_path
@@ -1255,6 +1708,9 @@ class FoundationPoseRunner:
             "translation_unit": "meter",
             "refine_iterations": (
                 refine_iterations
+            ),
+            "rotation_diversity_threshold_deg": (
+                rotation_diversity_threshold_deg
             ),
             "top_k": len(hypotheses),
             "poses_path": str(
@@ -1371,6 +1827,30 @@ class FoundationPoseRunner:
                 f"mesh={candidate_mesh_path}"
             ) from error
 
+        try:
+            self._save_all_register_hypotheses(
+                result_directory=result_directory,
+                view_name=view_name,
+                candidate_index=candidate.candidate_index,
+                scale_m=float(candidate.scale_m),
+                scaled_mesh_path=candidate_mesh_path,
+                returned_best_pose=returned_best_pose,
+                rgb=rgb,
+                depth_m=depth_m,
+                camera_matrix=camera_matrix,
+                mask_uint8=mask_uint8,
+            )
+        except Exception as diagnostic_error:
+            # This snapshot is diagnostic-only. The actual result extraction
+            # below already skips invalid entries and can fall back to the
+            # pose returned by register(), so snapshot failure must not turn
+            # a recoverable FoundationPose result into a failed job.
+            print(
+                "[FoundationPose all-hypothesis snapshot warning] "
+                f"view={view_name} candidate={candidate.candidate_index:02d} "
+                f"{type(diagnostic_error).__name__}: {diagnostic_error}"
+            )
+
         hypotheses = self._extract_hypotheses(
             returned_best_pose=(
                 returned_best_pose
@@ -1386,6 +1866,9 @@ class FoundationPoseRunner:
             hypotheses=hypotheses,
             refine_iterations=(
                 self._refine_iterations
+            ),
+            rotation_diversity_threshold_deg=(
+                self._rotation_diversity_threshold_deg
             ),
         )
 
