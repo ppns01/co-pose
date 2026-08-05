@@ -14,6 +14,7 @@ import numpy as np
 
 import main
 from generators import instantmesh_generator
+from result_storage import compact_query_label
 
 
 TEST_DIRECTORY = Path(__file__).resolve().parent
@@ -146,8 +147,8 @@ class BatchPipelineTests(unittest.TestCase):
                 patch.object(
                     main, "_self_align_generated_states", side_effect=fake_align
                 ),
-                patch.object(
-                    main,
+                patch(
+                    "pipeline.scale_refinement_dispatch."
                     "_refine_aligned_states_independent_axis_scale",
                     side_effect=lambda *, aligned_states, **_: tuple(aligned_states),
                 ),
@@ -313,8 +314,8 @@ class BatchPipelineTests(unittest.TestCase):
                     "_self_align_generated_states",
                     side_effect=fake_align,
                 ),
-                patch.object(
-                    main,
+                patch(
+                    "pipeline.scale_refinement_dispatch."
                     "_refine_aligned_states_independent_axis_scale",
                     side_effect=lambda *, aligned_states, **_: tuple(aligned_states),
                 ),
@@ -366,11 +367,19 @@ class BatchPipelineTests(unittest.TestCase):
             )
             self.assertEqual(
                 pair_roots[0].name,
-                "q000008_000001_i00",
+                compact_query_label(
+                    scene_id=config.query.scene_id,
+                    image_id=1,
+                    instance_index=config.query.instance_index,
+                ),
             )
             self.assertEqual(
                 pair_roots[1].name,
-                "q000008_000002_i00",
+                compact_query_label(
+                    scene_id=config.query.scene_id,
+                    image_id=2,
+                    instance_index=config.query.instance_index,
+                ),
             )
 
             summary = json.loads(
@@ -501,8 +510,8 @@ class BatchPipelineTests(unittest.TestCase):
                     "_self_align_generated_states",
                     side_effect=fake_align,
                 ),
-                patch.object(
-                    main,
+                patch(
+                    "pipeline.scale_refinement_dispatch."
                     "_refine_aligned_states_independent_axis_scale",
                     side_effect=lambda *, aligned_states, **_: tuple(aligned_states),
                 ),
@@ -543,6 +552,217 @@ class BatchPipelineTests(unittest.TestCase):
             self.assertEqual(
                 summary["queries"][1]["visualization_error"],
                 "RuntimeError: visualization",
+            )
+
+    def test_pair_scale_refinement_receives_current_query_frame(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            dir=TEST_DIRECTORY,
+        ) as temp_dir:
+            output_root = Path(temp_dir) / "batch"
+            config = replace(
+                main.build_config(
+                    main.parse_args(
+                        [
+                            "--query-image-ids",
+                            "1",
+                            "2",
+                            "--foundationpose-workers",
+                            "2",
+                        ]
+                    )
+                ),
+                output_root=output_root,
+                storage_results_only=False,
+                visible_scale_policy="independent",
+                enable_shared_axis_scale_refinement=False,
+            )
+
+            pair_scale_calls: list[dict[str, object]] = []
+
+            def fake_prepare(
+                *,
+                view_name: str,
+                frame: main.FrameSpec,
+                **_: object,
+            ) -> SimpleNamespace:
+                return SimpleNamespace(
+                    view_name=view_name,
+                    frame=frame,
+                )
+
+            def fake_generate(
+                *,
+                view_name: str,
+                frame: main.FrameSpec,
+                **_: object,
+            ) -> SimpleNamespace:
+                return SimpleNamespace(
+                    view_name=view_name,
+                    frame=frame,
+                )
+
+            def fake_extract_dino(
+                *,
+                prepared_views: object,
+                **_: object,
+            ) -> tuple[
+                tuple[object, object],
+                ...,
+            ]:
+                return tuple(
+                    (
+                        (f"{view.view_name}_{view.frame.image_id}_dino"),
+                        (f"{view.view_name}_{view.frame.image_id}_surface"),
+                    )
+                    for view in prepared_views
+                )
+
+            def fake_align(
+                *,
+                generated_states: object,
+                output_root: Path,
+                **_: object,
+            ) -> tuple[SimpleNamespace, ...]:
+                return tuple(
+                    SimpleNamespace(
+                        generated=state,
+                        self_alignment=(SimpleNamespace(candidate_index=0)),
+                        self_evaluation=(
+                            SimpleNamespace(
+                                summary_path=(output_root / "self_summary.json")
+                            )
+                        ),
+                    )
+                    for state in generated_states
+                )
+
+            def fake_pair_scale_refinement(
+                *,
+                config: object,
+                aligned_states: tuple[object, object],
+                output_root: Path,
+                reference_frame: object,
+                query_frame: object,
+                pair_visible_scale_pending: bool,
+            ) -> tuple[object, object]:
+                pair_scale_calls.append(
+                    {
+                        "aligned_states": aligned_states,
+                        "output_root": output_root,
+                        "reference_frame": reference_frame,
+                        "query_frame": query_frame,
+                        "pair_visible_scale_pending": pair_visible_scale_pending,
+                    }
+                )
+                return tuple(aligned_states)
+
+            def fake_pair(
+                *,
+                output_root: Path,
+                **_: object,
+            ) -> main.PairPipelineOutcome:
+                return main.PairPipelineOutcome(
+                    final_status="CONSISTENT",
+                    summary_path=(output_root / "final" / "final_selection.json"),
+                    pose_path=(output_root / "final" / "final_relative_pose.npy"),
+                    pose_accepted=True,
+                    visualization_path=None,
+                )
+
+            generator_context = MagicMock()
+            generator_context.__enter__.return_value = object()
+            generator_context.__exit__.return_value = False
+
+            with (
+                patch.object(
+                    instantmesh_generator,
+                    "InstantMeshGenerator",
+                    return_value=generator_context,
+                ),
+                patch.object(
+                    main,
+                    "_prepare_linemod_view",
+                    side_effect=fake_prepare,
+                ),
+                patch.object(
+                    main,
+                    "_extract_dino_inputs",
+                    side_effect=fake_extract_dino,
+                ),
+                patch.object(
+                    main,
+                    "_build_generated_state",
+                    side_effect=fake_generate,
+                ),
+                patch.object(
+                    main,
+                    "_self_align_generated_states",
+                    side_effect=fake_align,
+                ),
+                patch.object(
+                    main,
+                    "_apply_pair_scale_refinement",
+                    side_effect=fake_pair_scale_refinement,
+                ),
+                patch.object(
+                    main,
+                    "_run_aligned_pair",
+                    side_effect=fake_pair,
+                ),
+                patch.object(
+                    main,
+                    "validate_config",
+                    return_value=None,
+                ),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                exit_code = main.run_batch_pipeline(config)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(pair_scale_calls), 2)
+            self.assertEqual(
+                [
+                    call["query_frame"].image_id
+                    for call in pair_scale_calls
+                ],
+                [1, 2],
+            )
+            self.assertIs(
+                pair_scale_calls[0]["reference_frame"],
+                config.reference,
+            )
+            self.assertIs(
+                pair_scale_calls[1]["reference_frame"],
+                config.reference,
+            )
+            self.assertIs(
+                pair_scale_calls[0]["aligned_states"][0],
+                pair_scale_calls[1]["aligned_states"][0],
+            )
+            self.assertTrue(
+                pair_scale_calls[0]["pair_visible_scale_pending"]
+            )
+            self.assertTrue(
+                pair_scale_calls[1]["pair_visible_scale_pending"]
+            )
+            self.assertEqual(
+                pair_scale_calls[0]["output_root"].name,
+                compact_query_label(
+                    scene_id=config.query.scene_id,
+                    image_id=1,
+                    instance_index=config.query.instance_index,
+                ),
+            )
+            self.assertEqual(
+                pair_scale_calls[1]["output_root"].name,
+                compact_query_label(
+                    scene_id=config.query.scene_id,
+                    image_id=2,
+                    instance_index=config.query.instance_index,
+                ),
             )
 
 

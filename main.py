@@ -49,21 +49,12 @@ from pipeline.config_persist import (
 )
 from pipeline.config_validate import validate_config
 from pipeline.scale_refinement_dispatch import (
-    _apply_post_coarse_proxy_refinement,
-)
-from pipeline.scale_refinement_independent_axis import (
-    _refine_aligned_states_independent_axis_scale,
-)
-from pipeline.scale_refinement_joint_shared import (
-    _refine_aligned_states_joint_shared_scale,
+    _apply_pair_scale_refinement,
 )
 from pipeline.scale_refinement_shared import (
     _candidate_by_index,
     _visible_scale_enabled_for_view,
     _visible_scale_loss_improved,
-)
-from pipeline.scale_refinement_shared_axis import (
-    _refine_aligned_states_shared_axis_scale,
 )
 from pipeline.batch_results import (
     _persist_compact_batch_result,
@@ -271,6 +262,69 @@ def run_pipeline(
         timings=timing_values,
         pipeline_started_at=pipeline_started_at,
     )
+
+    if (
+        config.evaluation_enabled
+        and outcome.pose_path is not None
+    ):
+        try:
+            import numpy as np
+
+            from evaluation.relative_pose_evaluator import (
+                BOPFrameGTSpec,
+                evaluate_relative_pose,
+            )
+
+            predicted_relative_pose = np.load(
+                outcome.pose_path
+            )
+
+            reference_frame = BOPFrameGTSpec(
+                dataset_root=config.dataset_root,
+                split=config.split,
+                scene_id=config.reference.scene_id,
+                image_id=config.reference.image_id,
+                object_id=config.object_id,
+                instance_index=(
+                    config.reference.instance_index
+                ),
+            )
+            query_frame = BOPFrameGTSpec(
+                dataset_root=config.dataset_root,
+                split=config.split,
+                scene_id=config.query.scene_id,
+                image_id=config.query.image_id,
+                object_id=config.object_id,
+                instance_index=(
+                    config.query.instance_index
+                ),
+            )
+
+            evaluation = evaluate_relative_pose(
+                predicted_relative_pose=(
+                    predicted_relative_pose
+                ),
+                reference_frame=reference_frame,
+                query_frame=query_frame,
+                output_directory=(
+                    config.output_root / "evaluation"
+                ),
+            )
+
+            print(
+                "[Evaluation] rotation_error_deg="
+                f"{evaluation.rotation_error_deg:.3f}, "
+                "translation_error_cm="
+                f"{evaluation.translation_error_cm:.3f}"
+            )
+        except Exception as evaluation_error:
+            print(
+                "[Evaluation warning] Failed to score "
+                "the predicted relative pose against GT "
+                "(the completed run is unaffected): "
+                f"{type(evaluation_error).__name__}: "
+                f"{evaluation_error}"
+            )
 
     return outcome.pose_path
 
@@ -745,59 +799,24 @@ def run_batch_pipeline(
                         output_root=query_root,
                     )
                 )
-                pair_reference_state = (
-                    reference_state
+                print(
+                    "[Batch pair scale refinement] "
+                    f"query_image_id={query_frame.image_id}"
                 )
-
-                if (
-                    config.visible_scale_refinement_enabled
-                    and config.visible_scale_policy.strip().lower()
-                    == "joint_shared"
-                ):
-                    print(
-                        "[Batch joint shared scale] "
-                        f"query_image_id={query_frame.image_id}"
-                    )
-
-                    (
-                        pair_reference_state,
+                (
+                    pair_reference_state,
+                    query_state,
+                ) = _apply_pair_scale_refinement(
+                    config=config,
+                    aligned_states=(
+                        reference_state,
                         query_state,
-                    ) = _refine_aligned_states_joint_shared_scale(
-                        config=config,
-                        aligned_states=(
-                            reference_state,
-                            query_state,
-                        ),
-                        output_root=query_root,
-                    )
-
-                if config.pose_path == "self_mesh":
-                    if config.enable_shared_axis_scale_refinement:
-                        (
-                            pair_reference_state,
-                            query_state,
-                        ) = _refine_aligned_states_shared_axis_scale(
-                            config=config,
-                            aligned_states=(
-                                pair_reference_state,
-                                query_state,
-                            ),
-                            output_root=query_root,
-                            reference_frame=config.reference,
-                            query_frame=query_frame,
-                        )
-                    else:
-                        (
-                            pair_reference_state,
-                            query_state,
-                        ) = _refine_aligned_states_independent_axis_scale(
-                            config=config,
-                            aligned_states=(
-                                pair_reference_state,
-                                query_state,
-                            ),
-                            output_root=query_root,
-                        )
+                    ),
+                    output_root=query_root,
+                    reference_frame=config.reference,
+                    query_frame=query_frame,
+                    pair_visible_scale_pending=True,
+                )
 
                 timing_values[
                     "source_anchor_time_sec"

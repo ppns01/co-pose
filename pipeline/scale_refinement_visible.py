@@ -12,6 +12,17 @@ from pipeline.scale_refinement_visible_independent import (
 )
 
 
+def _normalized_visible_scale_policy(config: PipelineConfig) -> str:
+    return config.visible_scale_policy.strip().lower()
+
+
+def _pair_visible_scale_required(config: PipelineConfig) -> bool:
+    return (
+        bool(config.visible_scale_refinement_enabled)
+        and _normalized_visible_scale_policy(config) == "joint_shared"
+    )
+
+
 def _refine_aligned_states_visible_scale(
     *,
     config: PipelineConfig,
@@ -29,7 +40,7 @@ def _refine_aligned_states_visible_scale(
             동일 absolute scale bank를 Reference와 Query에 적용하고,
             양쪽 self-alignment를 함께 설명하는 하나의 scale을 선택.
     """
-    policy = config.visible_scale_policy.strip().lower()
+    policy = _normalized_visible_scale_policy(config)
 
     if policy == "independent":
         return _refine_aligned_states_visible_scale_independent(
