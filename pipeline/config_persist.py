@@ -65,6 +65,9 @@ def _save_run_config(
                 config.gt_mask_fallback_on_sam3_failure
             ),
         },
+        "evaluation": {
+            "enabled": config.evaluation_enabled,
+        },
         "sam3_prompt": config.sam3_prompt,
         "reference": {
             "scene_id": (
@@ -377,6 +380,9 @@ def _save_run_config(
             "minimum_pair_diameter_ratio": (
                 config.dgedi_minimum_pair_diameter_ratio
             ),
+            "registration_candidate_count": (
+                config.dgedi_registration_candidate_count
+            ),
             "confidence": {
                 "weights": {
                     "correspondence": (
@@ -567,6 +573,9 @@ def _print_runtime_config(
     print("  segmentation_source: sam3")
     print(
         f"  gt_mask_fallback_on_sam3_failure: {config.gt_mask_fallback_on_sam3_failure}"
+    )
+    print(
+        f"  evaluation_enabled: {config.evaluation_enabled}"
     )
     print(f"  sam3_prompt: {config.sam3_prompt}")
     print(

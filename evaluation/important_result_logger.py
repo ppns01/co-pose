@@ -39,9 +39,12 @@ except ImportError:  # pragma: no cover - Windows fallback
     fcntl = None
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POSE_CONVENTION = "T_query_camera_from_reference_camera"
 TRANSLATION_UNIT = "meter"
+# Pose selection/consistency verdict, NOT pipeline or evaluation status. See
+# inference_status / relative_evaluation_status / add_evaluation_status below
+# for those axes. Name intentionally unchanged.
 VALID_STATUSES = {"CONSISTENT", "REJECT"}
 VALID_VARIANTS = {"OFF", "ON"}
 
@@ -138,6 +141,30 @@ PAIR_CSV_FIELDS = (
     "total_time_sec",
     "visible_scale_time_sec",
     "foundationpose_time_sec",
+    # Pipeline/evaluation/quality-gate status (result_storage.py's result.json
+    # is the canonical source for these; see the adapter below).
+    "inference_status",
+    "relative_evaluation_status",
+    "add_evaluation_status",
+    "all_required_evaluations_completed",
+    "relative_evaluation_error",
+    "add_evaluation_error",
+    "pose_produced",
+    "quality_gate_mode",
+    "quality_gate_passed",
+    "gt_assisted",
+    "reference_mask_source",
+    "query_mask_source",
+    # ADD/ADD-S metrics (already computed by evaluation/linemod_add_evaluator.py)
+    "add_m",
+    "adds_m",
+    "add_or_adds_m",
+    "add_or_adds_normalized",
+    "add_metric_used",
+    "add_or_adds_0_1d_passed",
+    "symmetry_aware",
+    "symmetry_type",
+    "object_diameter_m",
 )
 
 
@@ -283,6 +310,39 @@ class RuntimeMetrics:
 
 
 @dataclass(frozen=True)
+class PipelineStatusMetrics:
+    """Carries result_storage.py's result.json status fields verbatim."""
+
+    inference_status: str | None = None
+    relative_evaluation_status: str | None = None
+    add_evaluation_status: str | None = None
+    all_required_evaluations_completed: bool | None = None
+    relative_evaluation_error: str | None = None
+    add_evaluation_error: str | None = None
+    pose_produced: bool | None = None
+    quality_gate_mode: str | None = None
+    quality_gate_passed: bool | None = None
+    gt_assisted: bool | None = None
+    reference_mask_source: str | None = None
+    query_mask_source: str | None = None
+
+
+@dataclass(frozen=True)
+class AddMetrics:
+    """Carries evaluation/linemod_add_evaluator.py's ADD/ADD-S output verbatim."""
+
+    add_m: float | None = None
+    adds_m: float | None = None
+    add_or_adds_m: float | None = None
+    add_or_adds_normalized: float | None = None
+    add_metric_used: str | None = None
+    add_or_adds_0_1d_passed: bool | None = None
+    symmetry_aware: bool | None = None
+    symmetry_type: str | None = None
+    object_diameter_m: float | None = None
+
+
+@dataclass(frozen=True)
 class ImportantPairResult:
     """GitHub에 저장할 pair 단위 핵심 결과."""
 
@@ -339,6 +399,11 @@ class ImportantPairResult:
     )
 
     extra: Mapping[str, Any] = field(default_factory=dict)
+
+    pipeline_status: PipelineStatusMetrics = field(
+        default_factory=PipelineStatusMetrics
+    )
+    add_metrics: AddMetrics = field(default_factory=AddMetrics)
 
     def __post_init__(self) -> None:
         normalized_status = self.status.upper()
@@ -806,6 +871,44 @@ def _build_run_summary(pair_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
         )
         rejected = sum(1 for row in rows if row.get("status") == "REJECT")
 
+        # Rows may be in-memory dicts (real bools) or re-read from CSV
+        # (strings), so booleans go through _boolean() in both cases.
+        fully_evaluated_count = sum(
+            1
+            for row in rows
+            if _boolean(row.get("all_required_evaluations_completed")) is True
+        )
+        partially_evaluated_count = sum(
+            1
+            for row in rows
+            if _boolean(row.get("all_required_evaluations_completed")) is not True
+            and (row.get("relative_evaluation_status") == "COMPLETED")
+            != (row.get("add_evaluation_status") == "COMPLETED")
+        )
+        evaluation_failed_count = sum(
+            1
+            for row in rows
+            if (
+                row.get("relative_evaluation_status") == "FAILED"
+                or row.get("add_evaluation_status") == "FAILED"
+            )
+            and row.get("relative_evaluation_status") != "COMPLETED"
+            and row.get("add_evaluation_status") != "COMPLETED"
+        )
+        quality_gate_passed_count = sum(
+            1
+            for row in rows
+            if _boolean(row.get("quality_gate_passed")) is True
+        )
+        quality_gate_failed_count = sum(
+            1
+            for row in rows
+            if _boolean(row.get("quality_gate_passed")) is False
+        )
+        gt_assisted_count = sum(
+            1 for row in rows if _boolean(row.get("gt_assisted")) is True
+        )
+
         metric_names = (
             "reference_path_rotation_error_deg",
             "reference_path_translation_error_cm",
@@ -827,6 +930,12 @@ def _build_run_summary(pair_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
             "consistency_rate": (
                 consistent / len(rows) if rows else None
             ),
+            "fully_evaluated_count": fully_evaluated_count,
+            "partially_evaluated_count": partially_evaluated_count,
+            "evaluation_failed_count": evaluation_failed_count,
+            "quality_gate_passed_count": quality_gate_passed_count,
+            "quality_gate_failed_count": quality_gate_failed_count,
+            "gt_assisted_count": gt_assisted_count,
             "metrics": {
                 metric: _aggregate(
                     value
@@ -852,7 +961,240 @@ def _build_run_summary(pair_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
             "CONSISTENT->CONSISTENT",
         )
     }
+    summary["aggregation_policy"] = {
+        "evaluation_denominator": (
+            "Pairs with all_required_evaluations_completed=false remain in "
+            "the denominator of paper averages and count as failures; they "
+            "are never dropped."
+        ),
+        "quality_gate": (
+            "quality_gate_passed=false rows are excluded from the main "
+            "performance table and reported as a separate diagnostic "
+            "subset; filter pair_results.csv on quality_gate_passed to "
+            "build it."
+        ),
+    }
     return summary
+
+
+def build_important_pair_result_from_compact_result(
+    *,
+    compact_result_path: Path | str | None = None,
+    compact_result: Mapping[str, Any] | None = None,
+    experiment_name: str,
+    comparison_group: str,
+    variant: str,
+    visible_scale_enabled: bool,
+    run_id: str,
+    split: str = "test",
+    method: str | None = None,
+    git_commit: str | None = None,
+    config_hash: str | None = None,
+    runtime: RuntimeMetrics | None = None,
+    consistency: ConsistencyMetrics | None = None,
+    reference_scale: ScaleDiagnostics | None = None,
+    query_scale: ScaleDiagnostics | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> tuple[ImportantPairResult, np.ndarray | None]:
+    """
+    result_storage.save_compact_pair_result()의 result.json을 canonical
+    source로 삼아 ImportantPairResult를 만드는 adapter.
+
+    이 모듈은 result.json의 consumer일 뿐, 두 번째 writer가 아니다.
+    result.json이 이미 계산한 값(ADD/ADD-S, pose_produced, quality_gate_*
+    등)을 그대로 옮겨 담을 뿐 재계산하지 않는다.
+
+    split은 result.json에 저장되지 않으므로 호출자가 명시적으로 전달해야
+    한다 (기본값 "test").
+    """
+
+    if compact_result is not None:
+        payload: Mapping[str, Any] = compact_result
+    elif compact_result_path is not None:
+        payload = json.loads(
+            Path(compact_result_path).read_text(encoding="utf-8")
+        )
+    else:
+        raise ValueError(
+            "Either compact_result_path or compact_result must be given."
+        )
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("Compact result payload must be a JSON object.")
+
+    reference = payload.get("reference") or {}
+    query = payload.get("query") or {}
+    evaluation = payload.get("evaluation") or {}
+    segmentation = payload.get("segmentation") or {}
+
+    reference_scene_id = int(reference.get("scene_id", 0))
+    reference_image_id = int(reference.get("image_id", 0))
+    reference_instance_index = int(reference.get("instance_index", 0))
+    query_scene_id = int(query.get("scene_id", 0))
+    query_image_id = int(query.get("image_id", 0))
+    query_instance_index = int(query.get("instance_index", 0))
+    object_id = int(payload.get("object_id", 0))
+
+    # Deterministic and variant-independent so _comparison_key's OFF/ON
+    # grouping is not broken by embedding the variant in the pair id.
+    pair_id = (
+        f"obj{object_id:06d}"
+        f"__r{reference_scene_id:06d}_{reference_image_id:06d}"
+        f"_i{reference_instance_index:02d}"
+        f"__q{query_scene_id:06d}_{query_image_id:06d}"
+        f"_i{query_instance_index:02d}"
+    )
+
+    status = "CONSISTENT" if payload.get("pose_status") == "accepted" else "REJECT"
+    rejection_reason = payload.get("error") or (
+        payload.get("final_summary") or {}
+    ).get("reason")
+
+    # translation_error_*_cm are taken verbatim; no m->cm conversion here.
+    final_error = PoseErrorMetrics(
+        rotation_error_deg=evaluation.get("rotation_error_deg"),
+        translation_error_cm=evaluation.get("translation_error_cm"),
+        translation_error_x_cm=evaluation.get("translation_error_x_cm"),
+        translation_error_y_cm=evaluation.get("translation_error_y_cm"),
+        translation_error_z_cm=evaluation.get("translation_error_z_cm"),
+    )
+
+    pipeline_status = PipelineStatusMetrics(
+        inference_status=payload.get("inference_status"),
+        relative_evaluation_status=payload.get("relative_evaluation_status"),
+        add_evaluation_status=payload.get("add_evaluation_status"),
+        all_required_evaluations_completed=payload.get(
+            "all_required_evaluations_completed"
+        ),
+        relative_evaluation_error=(
+            payload["relative_evaluation_error"]
+            if "relative_evaluation_error" in payload
+            else payload.get("evaluation_error")
+        ),
+        add_evaluation_error=payload.get("add_evaluation_error"),
+        pose_produced=payload.get("pose_produced"),
+        quality_gate_mode=payload.get("quality_gate_mode"),
+        quality_gate_passed=payload.get("quality_gate_passed"),
+        gt_assisted=segmentation.get("gt_assisted"),
+        reference_mask_source=segmentation.get("reference_source"),
+        query_mask_source=segmentation.get("query_source"),
+    )
+
+    # Copied verbatim out of evaluation/linemod_add_evaluator.py's to_dict();
+    # no recomputation, no renormalization, no threshold change.
+    add_metrics = AddMetrics(
+        add_m=evaluation.get("add_m"),
+        adds_m=evaluation.get("adds_m"),
+        add_or_adds_m=evaluation.get("add_or_adds_m"),
+        add_or_adds_normalized=evaluation.get("add_or_adds_normalized"),
+        add_metric_used=evaluation.get("add_metric_used"),
+        add_or_adds_0_1d_passed=evaluation.get("add_or_adds_0_1d_passed"),
+        symmetry_aware=evaluation.get("symmetry_aware"),
+        symmetry_type=evaluation.get("symmetry_type"),
+        object_diameter_m=evaluation.get("object_diameter_m"),
+    )
+
+    resolved_method = method or payload.get("selected_method") or "unknown"
+
+    result = ImportantPairResult(
+        experiment_name=experiment_name,
+        comparison_group=comparison_group,
+        variant=variant,
+        visible_scale_enabled=visible_scale_enabled,
+        run_id=run_id,
+        pair_id=pair_id,
+        dataset=str(payload.get("dataset") or "unknown"),
+        split=split,
+        object_id=object_id,
+        object_name=str(payload.get("object_name") or ""),
+        reference_scene_id=reference_scene_id,
+        reference_image_id=reference_image_id,
+        reference_instance_index=reference_instance_index,
+        query_scene_id=query_scene_id,
+        query_image_id=query_image_id,
+        query_instance_index=query_instance_index,
+        method=resolved_method,
+        status=status,
+        rejection_reason=rejection_reason,
+        git_commit=git_commit,
+        config_hash=config_hash,
+        reference_scale=reference_scale or ScaleDiagnostics(),
+        query_scale=query_scale or ScaleDiagnostics(),
+        consistency=consistency or ConsistencyMetrics(),
+        final_error=final_error,
+        runtime=runtime or RuntimeMetrics(),
+        extra=dict(extra) if extra is not None else {},
+        pipeline_status=pipeline_status,
+        add_metrics=add_metrics,
+    )
+
+    # CONSISTENT carries the final pose; REJECT must not, or
+    # save_important_pair_result raises (lines ~1000-1004 below). The
+    # pose is passed through byte-identically: no transpose/inverse/scale.
+    pose_query_from_reference = payload.get(
+        "relative_pose_query_from_reference"
+    )
+    final_pose = (
+        np.asarray(pose_query_from_reference, dtype=np.float64)
+        if status == "CONSISTENT" and pose_query_from_reference is not None
+        else None
+    )
+
+    return result, final_pose
+
+
+def save_important_pair_result_from_compact_result(
+    *,
+    output_root: Path | str,
+    compact_result_path: Path | str | None = None,
+    compact_result: Mapping[str, Any] | None = None,
+    experiment_name: str,
+    comparison_group: str,
+    variant: str,
+    visible_scale_enabled: bool,
+    run_id: str,
+    split: str = "test",
+    method: str | None = None,
+    git_commit: str | None = None,
+    config_hash: str | None = None,
+    runtime: RuntimeMetrics | None = None,
+    consistency: ConsistencyMetrics | None = None,
+    reference_scale: ScaleDiagnostics | None = None,
+    query_scale: ScaleDiagnostics | None = None,
+    extra: Mapping[str, Any] | None = None,
+    config_path: Path | str | None = None,
+) -> ImportantResultSaveResult:
+    """Thin wrapper: adapt result.json into ImportantPairResult, then save it.
+
+    result_storage.py remains the sole writer of result.json; this function
+    only ever reads it and writes to published_results/.
+    """
+
+    result, final_pose = build_important_pair_result_from_compact_result(
+        compact_result_path=compact_result_path,
+        compact_result=compact_result,
+        experiment_name=experiment_name,
+        comparison_group=comparison_group,
+        variant=variant,
+        visible_scale_enabled=visible_scale_enabled,
+        run_id=run_id,
+        split=split,
+        method=method,
+        git_commit=git_commit,
+        config_hash=config_hash,
+        runtime=runtime,
+        consistency=consistency,
+        reference_scale=reference_scale,
+        query_scale=query_scale,
+        extra=extra,
+    )
+
+    return save_important_pair_result(
+        output_root=output_root,
+        result=result,
+        final_pose_query_from_reference=final_pose,
+        config_path=config_path,
+    )
 
 
 def save_important_pair_result(
@@ -1020,6 +1362,8 @@ def save_important_pair_result(
             ),
         },
         "extra": dict(result.extra),
+        "pipeline_status": asdict(result.pipeline_status),
+        "add_metrics": asdict(result.add_metrics),
     }
     _atomic_write_json(pair_json_path, pair_payload)
 
@@ -1083,6 +1427,8 @@ def save_important_pair_result(
         "total_time_sec": result.runtime.total_time_sec,
         "visible_scale_time_sec": result.runtime.visible_scale_time_sec,
         "foundationpose_time_sec": result.runtime.foundationpose_time_sec,
+        **asdict(result.pipeline_status),
+        **asdict(result.add_metrics),
     }
 
     with _FileLock(lock_path):
@@ -1144,14 +1490,18 @@ def rebuild_important_result_indices(
 
 
 __all__ = [
+    "AddMetrics",
     "ConsistencyMetrics",
     "ImportantPairResult",
     "ImportantResultSaveResult",
+    "PipelineStatusMetrics",
     "PoseErrorMetrics",
     "RuntimeMetrics",
     "ScaleDiagnostics",
+    "build_important_pair_result_from_compact_result",
     "detect_git_commit",
     "rebuild_important_result_indices",
     "save_important_pair_result",
+    "save_important_pair_result_from_compact_result",
     "sha256_file",
 ]

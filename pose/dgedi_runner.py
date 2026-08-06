@@ -300,6 +300,11 @@ def _save_depth_consistent_proxy_surface_cloud(
         camera_hit_points - pose[:3, 3][None, :]
     ) @ pose[:3, :3]
 
+    # Ensure deterministic downsampling: Open3D's farthest_point_down_sample
+    # uses random initialization, so we must seed before each call to guarantee
+    # reproducible registration clouds from the same depth-consistent points.
+    o3d.utility.random.seed(0)
+
     registration_cloud = o3d.geometry.PointCloud()
     registration_cloud.points = o3d.utility.Vector3dVector(proxy_hit_points)
     registration_cloud = registration_cloud.remove_non_finite_points()
@@ -572,6 +577,9 @@ def _mesh_to_cloud(
     if len(cloud.points) == 0:
         raise ValueError(f"Geometry has no points: {path}")
 
+    # Ensure deterministic sampling operations
+    o3d.utility.random.seed(0)
+
     if len(cloud.points) > count:
         cloud = (
             cloud.farthest_point_down_sample(
@@ -796,6 +804,106 @@ def _restore_transform(
     )
 
 
+def _symmetric_chamfer(
+    source_cloud: Any,
+    target_cloud: Any,
+    transform: Any,
+    o3d: Any,
+) -> float:
+    """Untruncated symmetric chamfer distance, in the clouds' own units.
+
+    ICP fitness and inlier RMSE only see correspondences closer than
+    icp_threshold, which is 3% of the object diameter. Every point that a
+    wrong rotation pushes beyond that contributes nothing to either number
+    -- and that is exactly where the evidence separating a wrong rotation
+    from the right one lives. Measured on this pipeline's own Duck output,
+    ICP fitness ranked a 43-degree pose first out of 402 candidates while
+    this score ranked a 6-degree pose first over the same pool.
+    """
+
+    moved = o3d.geometry.PointCloud(source_cloud)
+    moved.transform(np.asarray(transform, dtype=np.float64))
+
+    forward = np.asarray(
+        moved.compute_point_cloud_distance(target_cloud),
+        dtype=np.float64,
+    )
+
+    backward = np.asarray(
+        target_cloud.compute_point_cloud_distance(moved),
+        dtype=np.float64,
+    )
+
+    if len(forward) == 0 or len(backward) == 0:
+        raise ValueError(
+            "Empty point cloud during chamfer scoring."
+        )
+
+    return float(forward.mean() + backward.mean())
+
+
+def _register_candidates(
+    *,
+    reference_norm: Any,
+    reference_features: Any,
+    query_norm: Any,
+    query_features: Any,
+    ransac_threshold: float,
+    icp_threshold: float,
+    candidate_count: int,
+    register_one: Any,
+    o3d: Any,
+) -> list[dict[str, Any]]:
+    """Build a pose candidate pool and score every member by chamfer.
+
+    registration_ransac_based_on_feature_matching() does not expose a seed
+    argument and draws from open3d's global RNG, so re-seeding before each
+    call yields a genuinely different hypothesis -- the same property that
+    forced seed(0) here in the first place, used deliberately instead of
+    being suppressed. The seed list is fixed, so the pool is reproducible.
+
+    Candidates whose RANSAC or ICP stage degenerates are skipped rather
+    than raising: with a pool, one degenerate draw is not a failure. The
+    caller raises if nothing survives.
+    """
+
+    candidates: list[dict[str, Any]] = []
+
+    for seed in range(candidate_count):
+        o3d.utility.random.seed(seed)
+
+        ransac, icp = register_one(
+            reference_norm,
+            reference_features,
+            query_norm,
+            query_features,
+            ransac_threshold,
+            icp_threshold,
+        )
+
+        if len(ransac.correspondence_set) < 3:
+            continue
+
+        if len(icp.correspondence_set) < 3:
+            continue
+
+        candidates.append(
+            {
+                "seed": seed,
+                "ransac": ransac,
+                "icp": icp,
+                "chamfer": _symmetric_chamfer(
+                    reference_norm,
+                    query_norm,
+                    icp.transformation,
+                    o3d,
+                ),
+            }
+        )
+
+    return candidates
+
+
 def _worker(
     args: argparse.Namespace,
 ) -> int:
@@ -866,6 +974,10 @@ def _worker(
     # 않고 open3d의 전역 RNG를 그대로 쓴다. 고정하지 않으면 완전히 동일한
     # mesh 쌍에도 실행마다 다른 RANSAC 결과가 나온다 -- 실측 결과 동일 mesh
     # 반복 실행에서 rotation이 5도, translation이 8.7cm까지 흔들렸다.
+    # 그 변동성을 억누르는 대신 후보 생성에 쓴다: _register_candidates가
+    # 매 호출 전에 고정된 seed 목록으로 다시 seeding하므로 풀 전체는
+    # 재현 가능하다. 여기 seed(0)은 feature 추출 등 그 이전 단계를 위한
+    # 기준점이다.
     o3d.utility.random.seed(0)
 
     from core.dgedi_distilled import (
@@ -977,32 +1089,45 @@ def _worker(
         )
     )
 
-    ransac, icp = register_one(
-        reference_norm,
-        reference_features,
-        query_norm,
-        query_features,
-        args.ransac_threshold,
-        args.icp_threshold,
+    candidates = _register_candidates(
+        reference_norm=reference_norm,
+        reference_features=reference_features,
+        query_norm=query_norm,
+        query_features=query_features,
+        ransac_threshold=args.ransac_threshold,
+        icp_threshold=args.icp_threshold,
+        candidate_count=(
+            args.registration_candidate_count
+        ),
+        register_one=register_one,
+        o3d=o3d,
     )
 
-    if (
-        len(ransac.correspondence_set)
-        < 3
-    ):
+    if not candidates:
         raise RuntimeError(
-            "dGeDi RANSAC found fewer "
+            "Every dGeDi candidate found fewer "
             "than 3 correspondences."
         )
 
-    if (
-        len(icp.correspondence_set)
-        < 3
-    ):
-        raise RuntimeError(
-            "dGeDi ICP found fewer "
-            "than 3 correspondences."
-        )
+    # Selection is by chamfer, never by ICP fitness or inlier RMSE: those
+    # are truncated at icp_threshold and demonstrably rank wrong rotations
+    # first on this data. See _symmetric_chamfer.
+    selected = min(
+        candidates,
+        key=lambda candidate: candidate["chamfer"],
+    )
+
+    ransac = selected["ransac"]
+    icp = selected["icp"]
+
+    print(
+        "[dGeDi candidates] "
+        f"count={len(candidates)}/"
+        f"{args.registration_candidate_count}, "
+        f"selected_seed={selected['seed']}, "
+        f"chamfer_m="
+        f"{selected['chamfer'] * diameter_m:.6f}"
+    )
 
     ransac_pose = _restore_transform(
         ransac.transformation,
@@ -1101,6 +1226,41 @@ def _worker(
             ),
             "pose": final_pose.tolist(),
         },
+        "candidate_selection": {
+            "criterion": (
+                "untruncated symmetric chamfer over an "
+                "ICP-refined RANSAC candidate pool"
+            ),
+            "requested_count": int(
+                args.registration_candidate_count
+            ),
+            "usable_count": len(candidates),
+            "selected_seed": int(
+                selected["seed"]
+            ),
+            "selected_chamfer_m": float(
+                selected["chamfer"] * diameter_m
+            ),
+            "candidates": [
+                {
+                    "seed": int(
+                        candidate["seed"]
+                    ),
+                    "chamfer_m": float(
+                        candidate["chamfer"]
+                        * diameter_m
+                    ),
+                    "icp_fitness": float(
+                        candidate["icp"].fitness
+                    ),
+                    "icp_inlier_rmse_m": float(
+                        candidate["icp"].inlier_rmse
+                        * diameter_m
+                    ),
+                }
+                for candidate in candidates
+            ],
+        },
     }
 
     with metadata_path.open(
@@ -1143,6 +1303,7 @@ def run_dgedi_registration(
     sample_count: int = 30000,
     ransac_threshold: float = 0.03,
     icp_threshold: float = 0.03,
+    registration_candidate_count: int = 32,
     maximum_surface_depth_residual_m: float = 0.010,
     minimum_visible_depth_pixels: int = 256,
     minimum_pair_point_count_ratio: float = 0.10,
@@ -1370,6 +1531,8 @@ def run_dgedi_registration(
         str(ransac_threshold),
         "--icp-threshold",
         str(icp_threshold),
+        "--registration-candidate-count",
+        str(registration_candidate_count),
     ]
 
     # dGeDi 공식 checkpoint에는 argparse.Namespace 등
@@ -1512,6 +1675,9 @@ def run_dgedi_registration(
             "minimum_pair_diameter_ratio": (
                 minimum_pair_diameter_ratio
             ),
+            "registration_candidate_count": (
+                registration_candidate_count
+            ),
             "reference_pose_camera_from_proxy": (
                 reference_self.tolist()
             ),
@@ -1648,6 +1814,12 @@ def _parse_worker_args() -> (
         "--icp-threshold",
         type=float,
         default=0.03,
+    )
+
+    parser.add_argument(
+        "--registration-candidate-count",
+        type=int,
+        default=32,
     )
 
     return parser.parse_args()

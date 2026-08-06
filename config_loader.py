@@ -19,6 +19,10 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
         "segmentation",
         "gt_mask_fallback_on_sam3_failure",
     ): "gt_mask_fallback_on_sam3_failure",
+    (
+        "evaluation",
+        "enabled",
+    ): "evaluation_enabled",
     ("storage", "results_only"): "storage_results_only",
     (
         "storage",
@@ -403,6 +407,10 @@ FIELD_MAP: dict[tuple[str, ...], str] = {
     ): "dgedi_minimum_pair_diameter_ratio",
     (
         "dgedi",
+        "registration_candidate_count",
+    ): "dgedi_registration_candidate_count",
+    (
+        "dgedi",
         "confidence",
         "weights",
         "correspondence",
@@ -632,6 +640,7 @@ INTEGER_FIELDS = {
     "visible_scale_coverage_grid_size",
     "dgedi_sample_count",
     "dgedi_minimum_visible_depth_pixels",
+    "dgedi_registration_candidate_count",
 }
 
 OPTIONAL_INTEGER_FIELDS = {
@@ -708,6 +717,7 @@ OPTIONAL_FLOAT_FIELDS = {
 
 BOOLEAN_FIELDS = {
     "gt_mask_fallback_on_sam3_failure",
+    "evaluation_enabled",
     "sam3_use_amp",
     "instantmesh_offline",
     "instantmesh_use_rembg",

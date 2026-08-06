@@ -259,7 +259,9 @@ def initialize_research_run(
         ),
         "catastrophic_failure": (
             "rotation_error_deg > 20 or "
-            "translation_error_cm > 10"
+            "translation_error_cm > 10, where translation error is the "
+            "object-centre displacement after anchoring the estimate to "
+            "the ground-truth reference pose"
         ),
         "mask_score": "cross-render mask IoU",
         "depth_score": (

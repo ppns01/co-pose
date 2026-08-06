@@ -549,6 +549,8 @@ def validate_config(
         and 0.0
         < config.dgedi_minimum_pair_diameter_ratio
         <= 1.0
+        and config.dgedi_registration_candidate_count
+        >= 1
     ):
         raise ValueError(
             "dGeDi numeric parameters are invalid."

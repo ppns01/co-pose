@@ -61,15 +61,31 @@ def _shared_axis_scale_gt_report(
             query_absolute_pose=query_gt,
         )
 
-        def _error(h: np.ndarray) -> dict[str, float]:
+        def _error(h: np.ndarray) -> dict[str, Any]:
             delta = h @ np.linalg.inv(ground_truth)
             cosine = float(
                 np.clip((np.trace(delta[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)
             )
+            # Translation error is measured as object-centre displacement,
+            # not from delta[:3, 3]: a relative pose is anchored at the
+            # reference camera origin, which sits far from the object, so
+            # any rotation error would leak into the translation number.
+            predicted_query_absolute = np.asarray(h, dtype=np.float64) @ (
+                np.asarray(reference_gt, dtype=np.float64)
+            )
+            translation_error_m = float(
+                np.linalg.norm(
+                    predicted_query_absolute[:3, 3]
+                    - np.asarray(query_gt, dtype=np.float64)[:3, 3]
+                )
+            )
             return {
                 "rotation_error_deg": math.degrees(math.acos(cosine)),
-                "translation_error_cm": float(
-                    np.linalg.norm(delta[:3, 3]) * 100.0
+                "translation_error_cm": translation_error_m * 100.0,
+                "translation_error_definition": (
+                    "object-centre displacement of "
+                    "H @ T_reference_from_object_gt versus "
+                    "T_query_from_object_gt"
                 ),
             }
 
@@ -206,6 +222,9 @@ def _refine_aligned_states_shared_axis_scale(
             ),
             minimum_pair_diameter_ratio=(
                 config.dgedi_minimum_pair_diameter_ratio
+            ),
+            registration_candidate_count=(
+                config.dgedi_registration_candidate_count
             ),
         )
         metadata = json.loads(

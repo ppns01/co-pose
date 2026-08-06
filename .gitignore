@@ -99,3 +99,16 @@ __pycache__/
 
 # External tool clone (has its own nested .git)
 bop_toolkit/
+
+# Local AI tools
+.claude/
+.codex/
+
+# Runtime outputs
+output/
+output_canonical/
+output_test/
+
+# Python cache
+__pycache__/
+*.pyc

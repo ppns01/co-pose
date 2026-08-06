@@ -29,17 +29,17 @@ linemod_all:
 data:
   dataset_root: datasets
   split: test
-  object_id: 8
-  object_name: driller
+  object_id: 9
+  object_name: duck
   mask_type: mask_visib
   reference:
-    scene_id: 8
+    scene_id: 9
     image_id: 0
     instance_index: 0
   query:
-    scene_id: 8
+    scene_id: 9
     # Use image_id or image_ids, never both.
-    image_id: 1
+    image_id: 3
     image_ids: null
     instance_index: 0
 
@@ -47,11 +47,15 @@ segmentation:
   # GT fallback makes the run GT-assisted and is recorded in every result.
   gt_mask_fallback_on_sam3_failure: true
 
+evaluation:
+  # GT is read for scoring only and is never used during inference.
+  enabled: true
+
 sam3:
   repository: sam3
   checkpoint: sam3/weights/sam3.pt
   bpe: sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
-  prompt: power drill
+  prompt: a small yellow rubber duck
   # null inherits experiment.device.
   device: cuda
   use_amp: true
@@ -105,9 +109,9 @@ scale:
     # A0/B0가 정의한 camera (u,v,depth) 축에서 view별로 독립 탐색한다.
     # depth 축은 관측 depth span이 작을수록 아래 uncertainty penalty가
     # 강해져 identity에 머문다. 범위는 수치적 안전 한계일 뿐 hard prior가 아니다.
-    minimum_factor: 0.50
-    maximum_factor: 2.00
-    grid_step_count: 7
+    minimum_factor: 0.80
+    maximum_factor: 1.20
+    grid_step_count: 9
     scale_penalty_weight: 0.02
     uncertainty_scale_penalty_weight: 0.10
     minimum_loss_improvement_ratio: 0.0
@@ -159,10 +163,18 @@ dgedi:
   mode: multi_scale
   device: cuda
   sample_count: 30000
+  # 두 threshold는 dGeDi가 직경으로 정규화한 좌표 기준이다(demo.py의
+  # normalize_and_center). 0.03은 3cm가 아니라 물체 직경의 3%이며,
+  # 직경 9.5cm짜리 Duck에서는 실효 2.84mm다.
   ransac_threshold: 0.03
   icp_threshold: 0.03
+  # RANSAC은 open3d 전역 RNG를 쓰므로 seed마다 다른 가설이 나온다. 그
+  # 가설들을 후보 풀로 모아 truncation 없는 symmetric chamfer로 고른다.
+  # 1이면 단일 해(과거 동작). 선택 기준은 ICP fitness/RMSE가 아니다 --
+  # 저 둘은 icp_threshold에서 잘려 틀린 회전을 1등으로 뽑는다.
+  registration_candidate_count: 32
   # Final proxy의 first ray-hit와 관측 depth가 일치해야 하는 최대 거리.
-  maximum_surface_depth_residual_m: 0.010
+  maximum_surface_depth_residual_m: 0.020
   minimum_visible_depth_pixels: 256
   minimum_pair_point_count_ratio: 0.10
   minimum_pair_diameter_ratio: 0.10
@@ -174,7 +186,7 @@ dgedi:
       mask: 0.20
       depth: 0.25
       free_space: 0.10
-    target_correspondence_fraction: 0.10
+    target_correspondence_fraction: 0.20
     good_inlier_fitness: 0.50
     maximum_normalized_rmse: 0.05
     maximum_normalized_depth_residual: 0.20

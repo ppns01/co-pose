@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
@@ -10,6 +11,15 @@ ViewName = Literal[
     "reference",
     "query",
 ]
+
+
+class EvaluationStatus(str, Enum):
+    """Outcome of one evaluation axis. Orthogonal to pipeline/inference status."""
+
+    COMPLETED = "COMPLETED"  # ran and produced numbers
+    FAILED = "FAILED"  # was attempted and raised
+    NOT_REQUESTED = "NOT_REQUESTED"  # reserved; no toggle exists yet
+    NOT_APPLICABLE = "NOT_APPLICABLE"  # cannot apply (e.g. no pose was produced)
 
 MeshGeneratorName = Literal[
     "instantmesh",
@@ -496,6 +506,7 @@ class PipelineConfig:
     query: FrameSpec
     mask_type: str
     gt_mask_fallback_on_sam3_failure: bool
+    evaluation_enabled: bool
     instantmesh_repository: Path
     instantmesh_python: Path
     instantmesh_config: Path
@@ -585,6 +596,7 @@ class PipelineConfig:
     dgedi_minimum_visible_depth_pixels: int
     dgedi_minimum_pair_point_count_ratio: float
     dgedi_minimum_pair_diameter_ratio: float
+    dgedi_registration_candidate_count: int
     dgedi_confidence_weight_correspondence: float
     dgedi_confidence_weight_inlier: float
     dgedi_confidence_weight_rmse: float
@@ -646,11 +658,31 @@ class AlignedProxyState:
 
 @dataclass(frozen=True)
 class PairPipelineOutcome:
+    """
+    한 query pair에 대한 파이프라인 실행 결과.
+
+    quality_gate_mode:
+        품질 게이트의 실행 상태. {"diagnostic", "not_run"} 중 하나.
+        "diagnostic"이면 게이트는 실행되었지만 결과를 강제하지 않는
+        참고용(advisory) 판정이며, pose를 억제하지 않는다.
+        "not_run"이면 dGeDi 실행 자체가 실패하여 게이트가 아직 돌지 않았다.
+
+    quality_gate_passed:
+        품질 게이트의 판정값. 게이트가 실행되지 않았으면 None이다.
+    """
+
     final_status: str
     summary_path: Path
     pose_path: Path | None
-    pose_accepted: bool
+    pose_produced: bool
     visualization_path: Path | None
     visualization_error: str | None = None
     research_summary_path: Path | None = None
+    quality_gate_mode: str = "not_run"
+    quality_gate_passed: bool | None = None
+
+    @property
+    def pose_accepted(self) -> bool:
+        """Deprecated: use pose_produced."""
+        return self.pose_produced
 

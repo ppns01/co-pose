@@ -183,6 +183,9 @@ class RelativePoseEvaluationResult:
     ground_truth_relative_pose: NDArray[np.float32]
 
     rotation_error_deg: float
+
+    # 물체 중심 변위(TE). 예측 상대 pose를 GT reference 절대 pose에
+    # anchor해서 잰다.
     translation_error_m: float
     translation_error_cm: float
     translation_error_x_m: float
@@ -191,6 +194,12 @@ class RelativePoseEvaluationResult:
     translation_error_x_cm: float
     translation_error_y_cm: float
     translation_error_z_cm: float
+
+    # 진단용: 상대 pose translation 열의 단순 차이. reference 카메라
+    # 원점 기준이라 회전 오차가 섞여 들어가므로 성공/실패 판정에는
+    # 쓰지 않는다.
+    reference_origin_translation_error_m: float
+    reference_origin_translation_error_cm: float
 
     estimated_rotation_deg: float
     estimated_translation_m: float
@@ -232,6 +241,8 @@ class RelativePoseEvaluationResult:
             self.rotation_error_deg,
             self.translation_error_m,
             self.translation_error_cm,
+            self.reference_origin_translation_error_m,
+            self.reference_origin_translation_error_cm,
             self.estimated_rotation_deg,
             self.estimated_translation_m,
             self.estimated_translation_cm,
@@ -768,13 +779,33 @@ def _translation_components_m(
     )
 
 
-def _translation_error_components_m(
-    predicted_pose: NDArray[np.float32],
-    ground_truth_pose: NDArray[np.float32],
+def _object_anchored_translation_error_components_m(
+    predicted_relative_pose: NDArray[np.float32],
+    reference_absolute_pose: NDArray[np.float32],
+    query_absolute_pose: NDArray[np.float32],
 ) -> tuple[float, float, float]:
+    """물체 중심이 실제로 얼마나 어긋났는지를 query 카메라 좌표계에서 잰다.
+
+    두 상대 pose의 translation 열을 그대로 빼면 회전 오차가 translation
+    오차로 섞여 들어간다. 상대 pose의 translation은 reference 카메라
+    원점을 기준으로 정의되는데 물체는 그 원점에서 멀리(LINEMOD 기준
+    0.8~1.0 m) 떨어져 있으므로, 회전 오차 theta는 그 차이를 대략
+    2 * distance * sin(theta / 2)만큼 부풀린다.
+
+    예측을 GT reference 절대 pose에 anchor하면
+    T_query_from_object_hat = H_hat @ T_reference_from_object_gt가 되고,
+    이것을 GT query 절대 pose와 비교하면 물체가 실제로 놓인 위치의
+    오차만 남는다. 6D pose 문헌의 TE 및 ADD와 같은 기준이다.
+    """
+
+    predicted_query_absolute = (
+        predicted_relative_pose.astype(np.float64)
+        @ reference_absolute_pose.astype(np.float64)
+    )
+
     difference = (
-        predicted_pose[:3, 3].astype(np.float64)
-        - ground_truth_pose[:3, 3].astype(np.float64)
+        predicted_query_absolute[:3, 3]
+        - query_absolute_pose[:3, 3].astype(np.float64)
     )
 
     return (
@@ -917,7 +948,35 @@ def evaluate_relative_pose(
         )
     )
 
-    translation_error_m = (
+    # 주 지표는 물체 중심 변위(TE)이다. 상대 pose translation 열의
+    # 단순 차이는 회전 오차를 translation 오차로 부풀리므로
+    # (_object_anchored_translation_error_components_m 설명 참고)
+    # 진단용으로만 따로 기록한다.
+    (
+        translation_error_x_m,
+        translation_error_y_m,
+        translation_error_z_m,
+    ) = _object_anchored_translation_error_components_m(
+        predicted_relative_pose=predicted_pose,
+        reference_absolute_pose=reference_absolute_pose,
+        query_absolute_pose=query_absolute_pose,
+    )
+
+    translation_error_m = float(
+        np.linalg.norm(
+            (
+                translation_error_x_m,
+                translation_error_y_m,
+                translation_error_z_m,
+            )
+        )
+    )
+
+    translation_error_cm = (
+        translation_error_m * 100.0
+    )
+
+    reference_origin_translation_error_m = (
         _compute_translation_error_m(
             predicted_pose=predicted_pose,
             ground_truth_pose=(
@@ -926,17 +985,8 @@ def evaluate_relative_pose(
         )
     )
 
-    translation_error_cm = (
-        translation_error_m * 100.0
-    )
-
-    (
-        translation_error_x_m,
-        translation_error_y_m,
-        translation_error_z_m,
-    ) = _translation_error_components_m(
-        predicted_pose=predicted_pose,
-        ground_truth_pose=ground_truth_relative_pose,
+    reference_origin_translation_error_cm = (
+        reference_origin_translation_error_m * 100.0
     )
 
     translation_error_x_cm = (
@@ -1102,6 +1152,24 @@ def evaluate_relative_pose(
         "translation_error_z_cm": (
             translation_error_z_cm
         ),
+        "translation_error_definition": (
+            "object-centre displacement: "
+            "T_query_from_object_hat = H_hat @ "
+            "T_reference_from_object_gt, compared against "
+            "T_query_from_object_gt"
+        ),
+        "reference_origin_translation_error_m": (
+            reference_origin_translation_error_m
+        ),
+        "reference_origin_translation_error_cm": (
+            reference_origin_translation_error_cm
+        ),
+        "reference_origin_translation_error_definition": (
+            "diagnostic only: raw difference of the two relative "
+            "poses' translation columns, which is anchored at the "
+            "reference camera origin and therefore inflates with "
+            "rotation error; never used for pass/fail"
+        ),
         "estimated_rotation_deg": (
             estimated_rotation_deg
         ),
@@ -1209,6 +1277,12 @@ def evaluate_relative_pose(
         ),
         translation_error_z_cm=(
             translation_error_z_cm
+        ),
+        reference_origin_translation_error_m=(
+            reference_origin_translation_error_m
+        ),
+        reference_origin_translation_error_cm=(
+            reference_origin_translation_error_cm
         ),
         estimated_rotation_deg=(
             estimated_rotation_deg

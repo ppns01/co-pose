@@ -215,6 +215,9 @@ def build_config(
         gt_mask_fallback_on_sam3_failure=(
             args.gt_mask_fallback_on_sam3_failure
         ),
+        evaluation_enabled=(
+            args.evaluation_enabled
+        ),
         instantmesh_repository=(
             instantmesh_repository
         ),
@@ -429,6 +432,9 @@ def build_config(
         ),
         dgedi_minimum_pair_diameter_ratio=(
             args.dgedi_minimum_pair_diameter_ratio
+        ),
+        dgedi_registration_candidate_count=(
+            args.dgedi_registration_candidate_count
         ),
         dgedi_confidence_weight_correspondence=(
             args.dgedi_confidence_weight_correspondence

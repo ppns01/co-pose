@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from core.types import EvaluationStatus
+
 
 @dataclass(frozen=True)
 class CompactResultPaths:
@@ -15,6 +17,14 @@ class CompactResultPaths:
     result_path: Path
     pose_path: Path | None
     evaluation_path: Path | None
+    inference_status: str = EvaluationStatus.FAILED.value
+    relative_evaluation_status: str = EvaluationStatus.NOT_APPLICABLE.value
+    add_evaluation_status: str = EvaluationStatus.NOT_APPLICABLE.value
+    all_required_evaluations_completed: bool = False
+    pose_produced: bool = False
+    quality_gate_mode: str = "not_run"
+    quality_gate_passed: bool | None = None
+    gt_assisted: bool = False
 
 
 def compact_query_label(
@@ -83,6 +93,9 @@ def _evaluation_values(evaluation: Any) -> dict[str, Any]:
         "translation_error_x_cm": evaluation.translation_error_x_cm,
         "translation_error_y_cm": evaluation.translation_error_y_cm,
         "translation_error_z_cm": evaluation.translation_error_z_cm,
+        "reference_origin_translation_error_cm": (
+            evaluation.reference_origin_translation_error_cm
+        ),
         "catastrophic_failure": evaluation.catastrophic_failure,
         "threshold_results": [
             {
@@ -133,7 +146,9 @@ def save_compact_pair_result(
     query_instance_index: int,
     pipeline_status: str,
     final_status: str,
-    pose_accepted: bool,
+    pose_produced: bool,
+    quality_gate_mode: str = "not_run",
+    quality_gate_passed: bool | None = None,
     reference_mask_source: str | None = None,
     query_mask_source: str | None = None,
     summary_path: Path | None = None,
@@ -174,7 +189,7 @@ def save_compact_pair_result(
         if pose.shape != (4, 4) or not np.all(np.isfinite(pose)):
             raise ValueError("Final relative pose must be a finite (4,4) matrix.")
         compact_pose_path = result_directory / (
-            "final_relative_pose.npy" if pose_accepted else "rejected_relative_pose.npy"
+            "final_relative_pose.npy" if pose_produced else "rejected_relative_pose.npy"
         )
         np.save(compact_pose_path, pose, allow_pickle=False)
         pose_values = pose.tolist()
@@ -201,6 +216,7 @@ def save_compact_pair_result(
         try:
             from evaluation.relative_pose_evaluator import (
                 evaluate_relative_pose,
+                load_bop_linemod_absolute_gt_pose,
             )
 
             evaluation = evaluate_relative_pose(
@@ -211,6 +227,63 @@ def save_compact_pair_result(
             )
             evaluation_values = _evaluation_values(evaluation)
             evaluation_path = evaluation.metadata_path
+
+            # Generate GT pose visualization
+            try:
+                from evaluation.mesh_on_photo_visualizer import render_mesh_with_gt_pose
+
+                # Load GT poses
+                reference_gt_pose = load_bop_linemod_absolute_gt_pose(reference_frame)
+                query_gt_pose = load_bop_linemod_absolute_gt_pose(query_frame)
+
+                # Find CAD mesh path
+                models_dir = Path(dataset_root) / "models"
+                cad_mesh_path = models_dir / f"obj_{object_id:06d}.ply"
+
+                if cad_mesh_path.is_file():
+                    # Need to load view data for RGB and masks
+                    from core.types import FrameSpec
+                    from preparation.view_loader import load_view
+
+                    ref_frame_spec = FrameSpec(
+                        dataset_root=dataset_root,
+                        split=split,
+                        scene_id=reference_scene_id,
+                        image_id=reference_image_id,
+                        object_id=object_id,
+                        instance_index=reference_instance_index,
+                    )
+                    query_frame_spec = FrameSpec(
+                        dataset_root=dataset_root,
+                        split=split,
+                        scene_id=query_scene_id,
+                        image_id=query_image_id,
+                        object_id=object_id,
+                        instance_index=query_instance_index,
+                    )
+
+                    ref_view = load_view(ref_frame_spec)
+                    query_view = load_view(query_frame_spec)
+
+                    gt_viz_path = render_mesh_with_gt_pose(
+                        cad_mesh_path=cad_mesh_path,
+                        reference_gt_pose=reference_gt_pose,
+                        query_gt_pose=query_gt_pose,
+                        reference_camera_k=np.asarray(ref_view.camera_matrix, dtype=np.float64),
+                        query_camera_k=np.asarray(query_view.camera_matrix, dtype=np.float64),
+                        reference_rgb=np.asarray(ref_view.rgb),
+                        query_rgb=np.asarray(query_view.rgb),
+                        reference_mask_bool=np.asarray(ref_view.mask_bool, dtype=bool),
+                        query_mask_bool=np.asarray(query_view.mask_bool, dtype=bool),
+                        output_path=(
+                            result_directory / "evaluation" / f"gt_mesh_visualization_obj{object_id}.png"
+                        ),
+                        title=f"Object {object_id}: Ground Truth Pose Visualization",
+                    )
+            except Exception as gt_viz_error:
+                # GT visualization is optional, don't fail the whole evaluation
+                pass
+
         except Exception as evaluation_exception:
             evaluation_error = (
                 f"{type(evaluation_exception).__name__}: {evaluation_exception}"
@@ -232,6 +305,35 @@ def save_compact_pair_result(
         except Exception as add_exception:
             add_evaluation_error = f"{type(add_exception).__name__}: {add_exception}"
 
+    # inference_status/relative_evaluation_status/add_evaluation_status are an
+    # axis fully separate from pipeline/quality-gate state. A pair with
+    # all_required_evaluations_completed=false stays in the denominator of
+    # paper averages and counts as a failure; it is never dropped.
+    inference_status = (
+        EvaluationStatus.COMPLETED
+        if str(pipeline_status).lower() == "completed"
+        else EvaluationStatus.FAILED
+    )
+    if pose_values is None:
+        relative_evaluation_status = EvaluationStatus.NOT_APPLICABLE
+        add_evaluation_status = EvaluationStatus.NOT_APPLICABLE
+    else:
+        relative_evaluation_status = (
+            EvaluationStatus.FAILED
+            if evaluation_error is not None
+            else EvaluationStatus.COMPLETED
+        )
+        add_evaluation_status = (
+            EvaluationStatus.FAILED
+            if add_evaluation_error is not None
+            else EvaluationStatus.COMPLETED
+        )
+    all_required_evaluations_completed = bool(
+        relative_evaluation_status is EvaluationStatus.COMPLETED
+        and add_evaluation_status is EvaluationStatus.COMPLETED
+    )
+    gt_assisted = "gt_fallback" in {reference_mask_source, query_mask_source}
+
     selected_method = summary_fields.get("selected_method") or summary_fields.get(
         "method"
     )
@@ -252,23 +354,33 @@ def save_compact_pair_result(
         },
         "pipeline_status": pipeline_status,
         "final_status": final_status,
-        "pose_accepted": bool(pose_accepted and pose_values is not None),
+        # Deprecated duplicates of pose_produced/relative_evaluation_error,
+        # kept for linemod_all_runner.py backward compatibility.
+        "pose_accepted": bool(pose_produced and pose_values is not None),
         "pose_status": (
             "accepted"
-            if pose_accepted and pose_values is not None
+            if pose_produced and pose_values is not None
             else ("rejected" if pose_values is not None else "missing")
         ),
         "selected_method": selected_method,
         "segmentation": {
             "reference_source": reference_mask_source,
             "query_source": query_mask_source,
-            "gt_assisted": "gt_fallback" in {reference_mask_source, query_mask_source},
+            "gt_assisted": gt_assisted,
         },
         "pose_convention": "T_query_camera_from_reference_camera",
         "relative_pose_query_from_reference": pose_values,
         "evaluation": evaluation_values,
         "evaluation_error": evaluation_error,
         "add_evaluation_error": add_evaluation_error,
+        "inference_status": inference_status.value,
+        "relative_evaluation_status": relative_evaluation_status.value,
+        "add_evaluation_status": add_evaluation_status.value,
+        "all_required_evaluations_completed": all_required_evaluations_completed,
+        "relative_evaluation_error": evaluation_error,
+        "pose_produced": bool(pose_produced and pose_values is not None),
+        "quality_gate_mode": quality_gate_mode,
+        "quality_gate_passed": quality_gate_passed,
         "error_type": error_type,
         "error": error,
         "final_summary": summary_fields,
@@ -296,6 +408,14 @@ def save_compact_pair_result(
         result_path=result_path,
         pose_path=compact_pose_path,
         evaluation_path=evaluation_path,
+        inference_status=inference_status.value,
+        relative_evaluation_status=relative_evaluation_status.value,
+        add_evaluation_status=add_evaluation_status.value,
+        all_required_evaluations_completed=all_required_evaluations_completed,
+        pose_produced=bool(pose_produced and pose_values is not None),
+        quality_gate_mode=quality_gate_mode,
+        quality_gate_passed=quality_gate_passed,
+        gt_assisted=gt_assisted,
     )
 
 
@@ -361,6 +481,25 @@ def backfill_compact_result_add_metrics(
         payload["evaluation"] = evaluation
     evaluation.update(add_evaluation.to_dict())
     payload["add_evaluation_error"] = None
+    payload["add_evaluation_status"] = EvaluationStatus.COMPLETED.value
+
+    relative_evaluation_status = payload.get("relative_evaluation_status")
+    if relative_evaluation_status is None:
+        # Legacy result.json predates this field; derive it conservatively
+        # from the pre-existing error strings rather than fabricating one.
+        relative_evaluation_status = (
+            EvaluationStatus.COMPLETED.value
+            if (
+                payload.get("relative_evaluation_error") is None
+                and payload.get("evaluation_error") is None
+                and isinstance(payload.get("evaluation"), dict)
+            )
+            else EvaluationStatus.FAILED.value
+        )
+        payload["relative_evaluation_status"] = relative_evaluation_status
+    payload["all_required_evaluations_completed"] = (
+        relative_evaluation_status == EvaluationStatus.COMPLETED.value
+    )
 
     _write_json_atomic(resolved_result_path, payload)
     return payload
