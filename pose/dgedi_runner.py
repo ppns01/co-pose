@@ -851,6 +851,7 @@ def _register_candidates(
     ransac_threshold: float,
     icp_threshold: float,
     candidate_count: int,
+    candidate_diagnostics: bool,
     register_one: Any,
     o3d: Any,
 ) -> list[dict[str, Any]]:
@@ -887,19 +888,25 @@ def _register_candidates(
         if len(icp.correspondence_set) < 3:
             continue
 
-        candidates.append(
-            {
-                "seed": seed,
-                "ransac": ransac,
-                "icp": icp,
-                "chamfer": _symmetric_chamfer(
-                    reference_norm,
-                    query_norm,
-                    icp.transformation,
-                    o3d,
-                ),
-            }
-        )
+        candidate = {
+            "seed": seed,
+            "ransac": ransac,
+            "icp": icp,
+            "chamfer": _symmetric_chamfer(
+                reference_norm,
+                query_norm,
+                icp.transformation,
+                o3d,
+            ),
+        }
+        if candidate_diagnostics:
+            candidate["ransac_chamfer"] = _symmetric_chamfer(
+                reference_norm,
+                query_norm,
+                ransac.transformation,
+                o3d,
+            )
+        candidates.append(candidate)
 
     return candidates
 
@@ -1099,6 +1106,9 @@ def _worker(
         candidate_count=(
             args.registration_candidate_count
         ),
+        candidate_diagnostics=(
+            args.candidate_diagnostics
+        ),
         register_one=register_one,
         o3d=o3d,
     )
@@ -1142,6 +1152,68 @@ def _worker(
         query_center,
         diameter_m,
     )
+
+    if args.candidate_diagnostics:
+        # Diagnostic-only candidate provenance. Selection remains exactly the
+        # same (minimum ICP-refined symmetric chamfer); these records let an
+        # offline experiment separate search failure from objective failure.
+        candidate_records: list[dict[str, Any]] = []
+        for candidate in candidates:
+            candidate_ransac_pose = _restore_transform(
+                candidate["ransac"].transformation,
+                reference_center,
+                query_center,
+                diameter_m,
+            )
+            candidate_icp_pose = _restore_transform(
+                candidate["icp"].transformation,
+                reference_center,
+                query_center,
+                diameter_m,
+            )
+            candidate_records.append(
+                {
+                    "seed": int(candidate["seed"]),
+                    "ransac_chamfer_m": float(
+                        candidate["ransac_chamfer"] * diameter_m
+                    ),
+                    "icp_chamfer_m": float(
+                        candidate["chamfer"] * diameter_m
+                    ),
+                    # Backward-compatible alias for the selection score.
+                    "chamfer_m": float(
+                        candidate["chamfer"] * diameter_m
+                    ),
+                    "ransac_fitness": float(candidate["ransac"].fitness),
+                    "ransac_inlier_rmse_m": float(
+                        candidate["ransac"].inlier_rmse * diameter_m
+                    ),
+                    "ransac_correspondence_count": int(
+                        len(candidate["ransac"].correspondence_set)
+                    ),
+                    "ransac_pose": candidate_ransac_pose.tolist(),
+                    "icp_fitness": float(candidate["icp"].fitness),
+                    "icp_inlier_rmse_m": float(
+                        candidate["icp"].inlier_rmse * diameter_m
+                    ),
+                    "icp_correspondence_count": int(
+                        len(candidate["icp"].correspondence_set)
+                    ),
+                    "icp_pose": candidate_icp_pose.tolist(),
+                }
+            )
+    else:
+        candidate_records = [
+            {
+                "seed": int(candidate["seed"]),
+                "chamfer_m": float(candidate["chamfer"] * diameter_m),
+                "icp_fitness": float(candidate["icp"].fitness),
+                "icp_inlier_rmse_m": float(
+                    candidate["icp"].inlier_rmse * diameter_m
+                ),
+            }
+            for candidate in candidates
+        ]
 
     ransac_path = (
         output
@@ -1227,6 +1299,9 @@ def _worker(
             "pose": final_pose.tolist(),
         },
         "candidate_selection": {
+            "candidate_diagnostics_enabled": bool(
+                args.candidate_diagnostics
+            ),
             "criterion": (
                 "untruncated symmetric chamfer over an "
                 "ICP-refined RANSAC candidate pool"
@@ -1241,25 +1316,7 @@ def _worker(
             "selected_chamfer_m": float(
                 selected["chamfer"] * diameter_m
             ),
-            "candidates": [
-                {
-                    "seed": int(
-                        candidate["seed"]
-                    ),
-                    "chamfer_m": float(
-                        candidate["chamfer"]
-                        * diameter_m
-                    ),
-                    "icp_fitness": float(
-                        candidate["icp"].fitness
-                    ),
-                    "icp_inlier_rmse_m": float(
-                        candidate["icp"].inlier_rmse
-                        * diameter_m
-                    ),
-                }
-                for candidate in candidates
-            ],
+            "candidates": candidate_records,
         },
     }
 
@@ -1820,6 +1877,15 @@ def _parse_worker_args() -> (
         "--registration-candidate-count",
         type=int,
         default=32,
+    )
+
+    parser.add_argument(
+        "--candidate-diagnostics",
+        action="store_true",
+        help=(
+            "Store every RANSAC/ICP pose and both Chamfer scores. "
+            "Diagnostic only; selection is unchanged."
+        ),
     )
 
     return parser.parse_args()
